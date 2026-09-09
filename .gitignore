@@ -181,3 +181,11 @@ wandb/
 swanlog/
 generated_predictions.jsonl
 predictions_score.json
+
+# WY local credentials, generated datasets and task database
+.env.*.local
+workspace/
+.intent/
+*.sqlite3-wal
+*.sqlite3-shm
+node_modules/

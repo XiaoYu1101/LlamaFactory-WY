@@ -1,0 +1,3 @@
+# Lightweight dataset workbench; local training dependencies are not required.
+fastapi>=0.115,<1
+uvicorn>=0.30,<1

@@ -34,6 +34,7 @@ class Engine:
         self.manager = Manager()
         self.runner = Runner(self.manager, demo_mode)
         self.chatter = WebChatModel(self.manager, demo_mode, lazy_init=(not pure_chat))
+        self.runner.chatter = self.chatter
         if not demo_mode:
             create_ds_config()
 

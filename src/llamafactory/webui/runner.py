@@ -24,6 +24,7 @@ from transformers.utils import is_torch_npu_available
 from ..extras.constants import LLAMABOARD_CONFIG, MULTIMODAL_SUPPORTED_MODELS, PEFT_METHODS, TRAINING_STAGES
 from ..extras.misc import is_accelerator_available, torch_gc
 from ..extras.packages import is_gradio_available
+from ..intent.resources import exclusive_resource
 from .common import (
     DEFAULT_CACHE_DIR,
     DEFAULT_CONFIG_DIR,
@@ -363,6 +364,7 @@ class Runner:
             args = self._parse_train_args(data) if do_train else self._parse_eval_args(data)
             yield {output_box: gen_cmd(args)}
 
+    @exclusive_resource("训练或评测")
     def _launch(self, data: dict["Component", Any], do_train: bool) -> Generator[dict["Component", Any], None, None]:
         r"""Start the training process."""
         output_box = self.manager.get_elem_by_id("{}.output_box".format("train" if do_train else "eval"))
@@ -373,6 +375,12 @@ class Runner:
         else:
             self.do_train, self.running_data = do_train, data
             args = self._parse_train_args(data) if do_train else self._parse_eval_args(data)
+
+            chatter = getattr(self, "chatter", None)
+            if chatter is not None and chatter.loaded:
+                chatter.engine = None
+                chatter.loaded_config = None
+                torch_gc()
 
             os.makedirs(args["output_dir"], exist_ok=True)
             save_args(os.path.join(args["output_dir"], LLAMABOARD_CONFIG), self._build_config_dict(data))

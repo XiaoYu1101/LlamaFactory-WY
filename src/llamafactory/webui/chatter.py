@@ -25,6 +25,7 @@ from ..data import Role
 from ..extras.constants import PEFT_METHODS
 from ..extras.misc import torch_gc
 from ..extras.packages import is_gradio_available
+from ..intent.resources import exclusive_resource
 from .common import get_save_dir, load_config
 from .locales import ALERTS
 
@@ -82,6 +83,7 @@ class WebChatModel(ChatModel):
         self.manager = manager
         self.demo_mode = demo_mode
         self.engine: BaseEngine | None = None
+        self.loaded_config = None
 
         if not lazy_init:  # read arguments from command line
             super().__init__()
@@ -98,6 +100,7 @@ class WebChatModel(ChatModel):
     def loaded(self) -> bool:
         return self.engine is not None
 
+    @exclusive_resource("加载对话模型")
     def load_model(self, data) -> Generator[str, None, None]:
         get = lambda elem_id: data[self.manager.get_elem_by_id(elem_id)]
         lang, model_name, model_path = get("top.lang"), get("top.model_name"), get("top.model_path")
@@ -156,8 +159,10 @@ class WebChatModel(ChatModel):
             args["double_quantization"] = not is_torch_npu_available()
 
         super().__init__(args)
+        self.loaded_config = {key: args.get(key) for key in ("model_name_or_path", "template", "adapter_name_or_path")}
         yield ALERTS["info_loaded"][lang]
 
+    @exclusive_resource("卸载对话模型")
     def unload_model(self, data) -> Generator[str, None, None]:
         lang = data[self.manager.get_elem_by_id("top.lang")]
 
@@ -168,6 +173,7 @@ class WebChatModel(ChatModel):
 
         yield ALERTS["info_unloading"][lang]
         self.engine = None
+        self.loaded_config = None
         torch_gc()
         yield ALERTS["info_unloaded"][lang]
 
@@ -190,6 +196,7 @@ class WebChatModel(ChatModel):
             "",
         )
 
+    @exclusive_resource("模型对话")
     def stream(
         self,
         chatbot: list[dict[str, str]],
@@ -213,6 +220,8 @@ class WebChatModel(ChatModel):
         Inputs: infer.chatbot, infer.messages, infer.system, infer.tools, infer.image, infer.video, ...
         Output: infer.chatbot, infer.messages
         """
+        if not self.loaded:
+            raise gr.Error("模型尚未加载，请在 Chat 页面加载模型。")
         with update_attr(self.engine.template, "enable_thinking", enable_thinking):
             chatbot.append({"role": "assistant", "content": ""})
             response = ""

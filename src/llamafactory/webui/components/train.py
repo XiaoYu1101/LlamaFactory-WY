@@ -467,4 +467,5 @@ def create_train_tab(engine: "Engine") -> dict[str, "Component"]:
     )
     config_path.change(list_config_paths, [current_time], [config_path], queue=False)
 
+    engine.runner.train_input_elems = input_elems
     return elem_dict

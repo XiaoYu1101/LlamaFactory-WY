@@ -17,6 +17,7 @@ import platform
 
 from ..extras.misc import fix_proxy, is_env_enabled
 from ..extras.packages import is_gradio_available
+from ..intent.ui import create_ant_page
 from .common import save_config
 from .components import (
     create_chat_box,
@@ -59,6 +60,9 @@ def create_ui(demo_mode: bool = False) -> "gr.Blocks":
             engine.manager.add_elems("infer", create_infer_tab(engine))
 
         if not demo_mode:
+            with gr.Tab("意图分类"):
+                create_ant_page(engine)
+
             with gr.Tab("Export"):
                 engine.manager.add_elems("export", create_export_tab(engine))
 
@@ -67,6 +71,7 @@ def create_ui(demo_mode: bool = False) -> "gr.Blocks":
         lang.change(engine.change_lang, [lang], engine.manager.get_elem_list(), queue=False)
         lang.input(save_config, inputs=[lang], queue=False)
 
+    demo.intent_engine = engine
     return demo
 
 
@@ -94,7 +99,13 @@ def run_web_ui() -> None:
     server_name = os.getenv("GRADIO_SERVER_NAME", "[::]" if gradio_ipv6 else "0.0.0.0")
     print("Visit http://ip:port for Web UI, e.g., http://127.0.0.1:7860")
     fix_proxy(ipv6_enabled=gradio_ipv6)
-    create_ui().queue().launch(share=gradio_share, server_name=server_name, inbrowser=True)
+    from ..intent.api import install_routes
+    from ..intent.service import get_service
+
+    demo = create_ui().queue()
+    demo.launch(share=gradio_share, server_name=server_name, inbrowser=True, prevent_thread_lock=True)
+    install_routes(demo.app, get_service(), demo.intent_engine)
+    demo.block_thread()
 
 
 def run_web_demo() -> None:
