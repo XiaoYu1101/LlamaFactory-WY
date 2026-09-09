@@ -452,7 +452,8 @@ def create_train_tab(engine: "Engine") -> dict[str, "Component"]:
     )
 
     dataset.focus(list_datasets, [dataset_dir, training_stage], [dataset], queue=False)
-    training_stage.change(change_stage, [training_stage], [dataset, packing], queue=False)
+    # Programmatic restore/intent presets already contain their dataset; only user changes clear it.
+    training_stage.input(change_stage, [training_stage], [dataset, packing], queue=False)
     reward_model.focus(list_checkpoints, [model_name, finetuning_type], [reward_model], queue=False)
     model_name.change(list_output_dirs, [model_name, finetuning_type, current_time], [output_dir], queue=False)
     finetuning_type.change(list_output_dirs, [model_name, finetuning_type, current_time], [output_dir], queue=False)

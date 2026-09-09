@@ -470,12 +470,25 @@ class Runner:
             except TimeoutExpired:
                 continue
 
-        if return_code == 0 or self.aborted:
+        if self.aborted:
+            finish_info = ALERTS["info_aborted"][lang]
+            finish_log = finish_info + "\n\n" + running_log
+        elif return_code == 0:
             finish_info = ALERTS["info_finished"][lang]
             if self.do_train:
                 finish_log = ALERTS["info_finished"][lang] + "\n\n" + running_log
             else:
-                finish_log = load_eval_results(os.path.join(output_path, "all_results.json")) + "\n\n" + running_log
+                try:
+                    finish_log = (
+                        load_eval_results(os.path.join(output_path, "all_results.json")) + "\n\n" + running_log
+                    )
+                except (OSError, ValueError):
+                    finish_info = ALERTS["err_failed"][lang]
+                    finish_log = (
+                        finish_info
+                        + "\n\nEvaluation results are missing or invalid: all_results.json\n\n"
+                        + running_log
+                    )
         else:
             if stderr is None:
                 webui_log_path = os.path.join(output_path, "webui_subprocess.log")

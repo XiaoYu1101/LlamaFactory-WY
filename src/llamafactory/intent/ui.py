@@ -435,13 +435,10 @@ def create_intent_page(engine=None, service=None):
     export_choice.change(show_export, [export_choice], [export_info, download])
 
     if train is not None:
-        from .training import attach_training
+        from .training import attach_training, training_outputs
 
         train_inputs = set(engine.runner.train_input_elems) | {export_choice}
-        train_outputs = [
-            engine.manager.get_elem_by_id("train." + name)
-            for name in ("output_box", "progress_bar", "loss_viewer", "swanlab_link")
-        ]
+        train_outputs = training_outputs(engine)
 
         def start_training(data):
             try:
@@ -473,6 +470,8 @@ def create_standalone(root=None, config_path=None):
 
 def create_ant_page(engine):
     """Embed the Ant Design workspace; keep training on the original Gradio event queue."""
+    from .training import training_outputs
+
     service = get_service()
     gr.HTML(
         '<iframe src="intent/" title="意图分类工作台" style="width:100%;height:1050px;border:0;border-radius:12px"></iframe>'
@@ -505,8 +504,5 @@ def create_ant_page(engine):
     train.click(
         start_training,
         set(engine.runner.train_input_elems) | {export_choice},
-        [
-            engine.manager.get_elem_by_id("train." + name)
-            for name in ("output_box", "progress_bar", "loss_viewer", "swanlab_link")
-        ],
+        training_outputs(engine),
     )

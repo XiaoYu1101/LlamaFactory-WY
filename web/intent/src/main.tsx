@@ -142,7 +142,7 @@ const copy: Record<Page, [string, string]> = {
   config: ["定义你的意图分类", "从业务场景出发，配置类别、说明和代表性样例。"],
   generate: [
     "让样例变成数据集",
-    "使用已保存的配置分批生成，每轮对话独立，进度自动保存。",
+    "根据意图配置和参考样例生成分类数据，生成进度自动保存。",
   ],
   review: [
     "把好每一条数据的质量",
@@ -1040,14 +1040,10 @@ function Workbench() {
                 <>
                   <Card className="generation-hero">
                     <div>
-                      <Tag color="blue">独立上下文 · 分批生成</Tag>
+                      <Tag color="blue">按意图配置生成</Tag>
                       <h2>少量样例，更多业务表达。</h2>
                       <p>
-                        每轮选取最多 {settings.data?.seed_count || 2}{" "}
-                        条参考样例，生成最多 {settings.data?.batch_size || 10}{" "}
-                        条新样本。
-                        <br />
-                        生成内容自动去重，新增样本进入待审核列表。
+                        根据已保存的类别定义和参考样例生成新样本，完成后即可进入人工审核。
                       </p>
                       <div className="hero-actions">
                         <Button
@@ -1084,26 +1080,6 @@ function Workbench() {
                           配置有未保存修改，请先保存。
                         </p>
                       )}
-                    </div>
-                    <div className="batch-visual">
-                      <div className="batch-node">
-                        <span>参考样例</span>
-                        <strong>
-                          {settings.data?.seed_count || 2}
-                          <small>条以内</small>
-                        </strong>
-                      </div>
-                      <div className="batch-arrow">
-                        <ArrowRightOutlined />
-                        <small>每轮</small>
-                      </div>
-                      <div className="batch-node generated">
-                        <span>新增样本</span>
-                        <strong>
-                          {settings.data?.batch_size || 10}
-                          <small>条以内</small>
-                        </strong>
-                      </div>
                     </div>
                   </Card>
                   <div className="generation-meta">
@@ -1183,8 +1159,8 @@ function Workbench() {
                               <strong>{number(job.accepted)}</strong> /{" "}
                               {number(target)} 条{" "}
                               <span>
-                                已请求 {job.attempts} 轮 · 去重 {job.duplicates}{" "}
-                                条 · 无效 {job.invalid} 条
+                                已过滤 {job.duplicates + job.invalid}{" "}
+                                条重复或无效样本
                               </span>
                             </div>
                             <div className="row-actions">
@@ -1195,7 +1171,7 @@ function Workbench() {
                                   onClick={() =>
                                     perform(
                                       () => api(`/jobs/${job.id}/pause`, {}),
-                                      "已请求暂停，当前批次完成后生效",
+                                      "正在暂停，请稍候",
                                     )
                                   }
                                 >
@@ -1449,7 +1425,7 @@ function Workbench() {
           <Form.Item
             name="examples"
             label="参考样例"
-            extra="每行一条，至少 1 条。生成时每轮选取最多 2 条。"
+            extra="每行一条，至少 1 条。建议提供不同表达方式的真实业务样例。"
             rules={[
               {
                 required: true,
@@ -1591,10 +1567,6 @@ function Workbench() {
         <dl className="settings-list">
           <dt>服务地址</dt>
           <dd>{settings.data?.base_url}</dd>
-          <dt>每轮参考样例</dt>
-          <dd>最多 {settings.data?.seed_count} 条</dd>
-          <dt>每轮生成数量</dt>
-          <dd>最多 {settings.data?.batch_size} 条</dd>
           <dt>配置文件</dt>
           <dd>
             <code>{settings.data?.config_path}</code>
