@@ -4,7 +4,7 @@
   "model": "deepseek-v4-flash",
   "api_key_env": "DEEPSEEK_API_KEY",
   "timeout_seconds": 60,
-  "max_tokens": 2048,
+  "max_tokens": 8192,
   "temperature": 1.0,
   "json_mode": true,
   "thinking": "disabled",

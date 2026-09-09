@@ -25,8 +25,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.routing import Mount
 
 from .export import freeze_dataset, get_export
-from .models import IntentError
-from .providers import read_config
+from .models import IntentError, validate_intents
+from .providers import local_settings, read_config
+from .records import parse_examples, suggest_labels
 from .service import get_service
 
 
@@ -42,7 +43,9 @@ class ProjectInput(Payload):
 
 class SampleInput(Payload):
     label: str
-    text: str = Field(max_length=1000)
+    text: str = Field(max_length=4000)
+    instruction: str | None = Field(default=None, max_length=12000)
+    output: str | None = Field(default=None, max_length=4000)
 
 
 class Selection(Payload):
@@ -53,8 +56,14 @@ class Selection(Payload):
 class ReviewInput(Payload):
     selected: list[Selection] = Field(min_length=1, max_length=100)
     action: Literal["approved", "rejected", "delete", "restore", "edit"]
-    text: str | None = Field(default=None, max_length=1000)
+    text: str | None = Field(default=None, max_length=4000)
+    instruction: str | None = Field(default=None, max_length=12000)
+    output: str | None = Field(default=None, max_length=4000)
     label: str | None = None
+
+
+class ExamplesInput(Payload):
+    examples: str = Field(max_length=256000)
 
 
 class JobInput(Payload):
@@ -89,8 +98,20 @@ def create_api(service, engine=None):
         return {
             **config,
             "integrated": engine is not None,
+            "api_key_configured": bool(
+                os.getenv(config["api_key_env"]) or local_settings().get(config["api_key_env"])
+            ),
             "config_path": str(service.config_path or os.getenv("WY_INTENT_CONFIG", "config/intent_generation.json")),
         }
+
+    @app.post("/scenarios/validate")
+    def validate_scenario(body: dict):
+        return validate_intents([body])[0]
+
+    @app.post("/examples/parse")
+    def inspect_examples(body: ExamplesInput):
+        examples = parse_examples(body.examples)
+        return {"examples": examples, "count": len(examples), "output_labels": suggest_labels(examples)}
 
     @app.get("/projects")
     def projects():
@@ -147,11 +168,19 @@ def create_api(service, engine=None):
 
     @app.post("/versions/{version_id}/samples")
     def add_sample(version_id: str, body: SampleInput):
-        return {"id": store.add_sample(version_id, body.label, body.text)}
+        return {"id": store.add_sample(version_id, body.label, body.text, body.instruction, body.output)}
 
     @app.post("/versions/{version_id}/review")
     def review(version_id: str, body: ReviewInput):
-        store.review(version_id, [x.model_dump() for x in body.selected], body.action, body.text, body.label)
+        store.review(
+            version_id,
+            [x.model_dump() for x in body.selected],
+            body.action,
+            body.text,
+            body.label,
+            body.instruction,
+            body.output,
+        )
         return {"ok": True}
 
     @app.post("/versions/{version_id}/jobs")
@@ -174,6 +203,11 @@ def create_api(service, engine=None):
     @app.post("/versions/{version_id}/exports")
     def freeze(version_id: str):
         return freeze_dataset(store, version_id)
+
+    @app.get("/exports/{export_id}/json")
+    def download_json(export_id: str):
+        export = get_export(store, export_id)
+        return FileResponse(Path(export["path"]) / "train.json", filename=f"intent-{export_id[:8]}.json")
 
     @app.get("/exports/{export_id}/download")
     def download(export_id: str):

@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .models import IntentError, clean_text, dump, fingerprint, integer, now, uid, validate_intents
+from .records import record_fingerprint, validate_record
 
 
 SCHEMA = """
@@ -73,6 +74,11 @@ class Store:
         with self.connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.executescript(SCHEMA)
+            # Additive migration keeps existing workspaces, review history and exports intact.
+            columns = {row[1] for row in db.execute("PRAGMA table_info(samples)")}
+            for column in ("instruction", "output", "original_instruction", "original_output"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE samples ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def connect(self, write: bool = False):
@@ -140,45 +146,60 @@ class Store:
             db.execute("INSERT INTO versions VALUES (?,?,?,?)", (version_id, project_id, config, now()))
             db.execute("UPDATE projects SET name=?,current_version=? WHERE id=?", (name, version_id, project_id))
             for intent in intents:
+                if intent.get("format") == "alpaca":
+                    continue  # Reference JSON guides generation; it is not training output.
                 for seed in intent["examples"]:
                     self._insert_sample(db, version_id, intent["label"], seed, "user")
         return {"id": project_id, "version_id": version_id}
 
     @staticmethod
     def _insert_sample(db, version_id, label, text, source, job_id=None, batch_id=None, seed_ids=None):
+        record = validate_record(text) if isinstance(text, dict) else None
+        text = record["input"] if record else text
+        instruction, output = (record["instruction"], record["output"]) if record else ("", "")
         sample_id = uid()
         cursor = db.execute(
             "INSERT OR IGNORE INTO samples "
-            "(id,version_id,label,original,text,fingerprint,source,job_id,batch_id,seed_ids,created) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "(id,version_id,label,original,text,fingerprint,source,job_id,batch_id,seed_ids,created,instruction,output,original_instruction,original_output) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 sample_id,
                 version_id,
                 label,
                 text,
                 text,
-                fingerprint(text),
+                record_fingerprint(record) if record else fingerprint(text),
                 source,
                 job_id,
                 batch_id,
                 dump(seed_ids or []),
                 now(),
+                instruction,
+                output,
+                instruction,
+                output,
             ),
         )
         return sample_id if cursor.rowcount else None
 
-    def add_sample(self, version_id: str, label: str, text: str) -> str:
-        text = clean_text(text, "样本文本")
+    def add_sample(self, version_id: str, label: str, text: str, instruction=None, output=None) -> str:
+        text = clean_text(text, "样本文本", 4000)
         with self.connect(True) as db:
             config = json.loads(self.require(db, "versions", version_id)["config"])
             if label not in {x["label"] for x in config}:
                 raise IntentError("请选择该配置版本中的类别。")
+            scenario = next(x for x in config if x["label"] == label)
+            if scenario.get("format") == "alpaca":
+                text = validate_record(dict(instruction=instruction, input=text, output=output), scenario)
             sample_id = self._insert_sample(db, version_id, label, text, "manual")
             if sample_id is None:
                 raise IntentError("同类别已有相同文本，包括已删除或驳回的记录。")
             return sample_id
 
     def seeds(self, version_id: str, label: str) -> list[dict]:
+        scenario = next(x for x in self.version(version_id)["config"] if x["label"] == label)
+        if scenario.get("format") == "alpaca":
+            return [{"id": f"reference:{label}:{i}", **x} for i, x in enumerate(scenario["examples"])]
         with self.connect() as db:
             return [
                 dict(x)
@@ -195,7 +216,7 @@ class Store:
             x[0]
             for x in db.execute(
                 "SELECT fingerprint FROM samples WHERE version_id=? AND deleted=0 AND status<>'rejected' "
-                "GROUP BY fingerprint HAVING COUNT(DISTINCT label)>1",
+                "GROUP BY fingerprint HAVING COUNT(DISTINCT CASE WHEN instruction='' THEN label ELSE output END)>1",
                 (version_id,),
             )
         }
@@ -209,8 +230,8 @@ class Store:
                 clause += f" AND {column}=?"
                 values.append(value)
         if query:
-            clause += " AND instr(text,?)>0"
-            values.append(str(query))
+            clause += " AND (instr(text,?)>0 OR instr(instruction,?)>0 OR instr(output,?)>0)"
+            values.extend([str(query)] * 3)
         with self.connect() as db:
             count = db.execute(f"SELECT COUNT(*) FROM samples WHERE {clause}", values).fetchone()[0]
             page = min(page, max(1, (count + page_size - 1) // page_size))
@@ -235,7 +256,9 @@ class Store:
             conflicts = len(self.conflicts(db, version_id))
         return {"groups": [dict(x) for x in rows], "conflicts": conflicts}
 
-    def review(self, version_id: str, selected: list[dict], action: str, text=None, label=None):
+    def review(
+        self, version_id: str, selected: list[dict], action: str, text=None, label=None, instruction=None, output=None
+    ):
         if action not in {"approved", "rejected", "delete", "restore", "edit"} or not selected:
             raise IntentError("请先选择需要操作的样本。")
         if action == "edit" and len(selected) != 1:
@@ -255,8 +278,16 @@ class Store:
                         raise IntentError("请先恢复已删除的样本。")
                     if label not in valid_labels:
                         raise IntentError("类别不存在。")
-                    after.update(text=clean_text(text, "样本文本"), label=label, status="pending")
-                    after["fingerprint"] = fingerprint(after["text"])
+                    scenario = next(x for x in config if x["label"] == label)
+                    after.update(text=clean_text(text, "样本文本", 4000), label=label, status="pending")
+                    if scenario.get("format") == "alpaca":
+                        record = validate_record(dict(instruction=instruction, input=text, output=output), scenario)
+                        after.update(text=record["input"], instruction=record["instruction"], output=record["output"])
+                        after["fingerprint"] = record_fingerprint(record)
+                    else:
+                        if before["instruction"]:
+                            raise IntentError("不能将 JSON 训练记录移入旧版单标签类别。")
+                        after["fingerprint"] = fingerprint(after["text"])
                 elif action in {"delete", "restore"}:
                     after.update(deleted=int(action == "delete"), status="pending")
                 else:
@@ -266,9 +297,20 @@ class Store:
                 after["revision"] += 1
                 try:
                     db.execute(
-                        "UPDATE samples SET text=?,label=?,fingerprint=?,status=?,deleted=?,revision=? WHERE id=?",
+                        "UPDATE samples SET text=?,label=?,fingerprint=?,status=?,deleted=?,revision=?,instruction=?,output=? WHERE id=?",
                         tuple(
-                            after[x] for x in ("text", "label", "fingerprint", "status", "deleted", "revision", "id")
+                            after[x]
+                            for x in (
+                                "text",
+                                "label",
+                                "fingerprint",
+                                "status",
+                                "deleted",
+                                "revision",
+                                "instruction",
+                                "output",
+                                "id",
+                            )
                         ),
                     )
                 except sqlite3.IntegrityError:
@@ -416,11 +458,23 @@ class Store:
                 "SELECT COALESCE(SUM(accepted),0) FROM batches WHERE job_id=? AND label=?", (job_id, label)
             ).fetchone()[0]
             remaining, accepted, duplicates = targets[label] - done, 0, 0
+            config = json.loads(self.require(db, "versions", job["version_id"])["config"])
+            scenario = next(x for x in config if x["label"] == label)
+            reference_keys = (
+                {record_fingerprint(x) for x in scenario["examples"]} if scenario.get("format") == "alpaca" else set()
+            )
             for text in texts:
                 if accepted >= remaining:
                     break
+                if scenario.get("format") == "alpaca":
+                    text = validate_record(text, scenario, generated=True)
+                    if record_fingerprint(text) in reference_keys:
+                        duplicates += 1
+                        continue
+                else:
+                    text = clean_text(text, "生成文本")
                 sample = self._insert_sample(
-                    db, job["version_id"], label, clean_text(text, "生成文本"), "generated", job_id, batch_id, seed_ids
+                    db, job["version_id"], label, text, "generated", job_id, batch_id, seed_ids
                 )
                 if sample:
                     accepted += 1

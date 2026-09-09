@@ -19,6 +19,7 @@ import zipfile
 from pathlib import Path
 
 from .models import IntentError, classification_prompt, dump, now, uid
+from .records import validate_record
 
 
 def freeze_dataset(store, version_id: str) -> dict:
@@ -44,7 +45,7 @@ def freeze_dataset(store, version_id: str) -> dict:
         samples = [
             dict(x)
             for x in db.execute(
-                "SELECT id,label,text,source,revision,seed_ids FROM samples "
+                "SELECT id,label,instruction,text,output,source,revision,seed_ids FROM samples "
                 "WHERE version_id=? AND deleted=0 AND status='approved' ORDER BY label,id",
                 (version_id,),
             )
@@ -52,8 +53,16 @@ def freeze_dataset(store, version_id: str) -> dict:
         missing = {x["label"] for x in intents} - {x["label"] for x in samples}
         if missing:
             raise IntentError("以下类别没有已通过样本：" + "、".join(sorted(missing)))
-        prompt = classification_prompt(intents)
-        training = [{"instruction": prompt, "input": x["text"], "output": x["label"]} for x in samples]
+        prompt = classification_prompt([x for x in intents if x.get("format") != "alpaca"])
+        scenarios = {x["label"]: x for x in intents}
+        training = [
+            validate_record(
+                dict(instruction=x["instruction"], input=x["text"], output=x["output"]), scenarios[x["label"]]
+            )
+            if scenarios[x["label"]].get("format") == "alpaca"
+            else {"instruction": prompt, "input": x["text"], "output": x["label"]}
+            for x in samples
+        ]
         contents = {
             "train.json": dump(training),
             "dataset_info.json": dump({"wy_intent_train": {"file_name": "train.json", "formatting": "alpaca"}}),
@@ -67,7 +76,9 @@ def freeze_dataset(store, version_id: str) -> dict:
             "created": now(),
             "count": len(samples),
             "labels": intents,
-            "classification_prompt": prompt,
+            "classification_prompt": prompt if any(x.get("format") != "alpaca" for x in intents) else None,
+            "instructions": list(dict.fromkeys(x["instruction"] for x in training)),
+            "reference_samples_included": False if all(x.get("format") == "alpaca" for x in intents) else None,
             "files": hashes,
             "evaluation": "未自动划分评测集；请另行准备独立测试数据。",
         }

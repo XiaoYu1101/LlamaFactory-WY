@@ -113,7 +113,7 @@ class JobRunner:
             )
             error, fatal, produced, invalid, texts = "", False, 0, 0, []
             try:
-                texts, produced, invalid = parse_samples(provider.generate(messages), count)
+                texts, produced, invalid = parse_samples(provider.generate(messages), count, target)
                 consecutive_errors = 0
             except ProviderError as failure:
                 error = str(failure)

@@ -65,6 +65,8 @@ def integer(value, field: str, minimum: int = 1, maximum: int = 100000) -> int:
 
 
 def validate_intents(rows: list[dict]) -> list[dict]:
+    from .records import parse_examples, validate_record
+
     if not isinstance(rows, list) or not 1 <= len(rows) <= 100:
         raise IntentError("请配置 1 到 100 个意图类别。")
     result, labels = [], set()
@@ -75,6 +77,28 @@ def validate_intents(rows: list[dict]) -> list[dict]:
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", label) or label.casefold() in labels:
             raise IntentError("类别标识需以英文字母开头，使用字母、数字、下划线或短横线，且不能重复。")
         labels.add(label.casefold())
+        if row.get("format") == "alpaca":
+            examples = parse_examples(row.get("examples"))
+            output_labels = row.get("output_labels", [])
+            if not isinstance(output_labels, list) or len(output_labels) > 100:
+                raise IntentError("答案标签必须是最多 100 项的列表。")
+            output_labels = [clean_text(x, "答案标签", 64) for x in output_labels]
+            if len(set(output_labels)) != len(output_labels) or any("、" in x for x in output_labels):
+                raise IntentError("答案标签不能重复或包含顿号。")
+            scenario = dict(
+                label=label,
+                name=clean_text(row.get("name"), "场景名称", 100),
+                description=clean_text(row.get("description"), "生成要求"),
+                examples=examples,
+                target=integer(row.get("target", 1000), "生成数量"),
+                format="alpaca",
+                output_labels=output_labels,
+            )
+            scenario["examples"] = [validate_record(x, scenario) for x in examples]
+            result.append(scenario)
+            continue
+        if row.get("format") not in {None, "text"}:
+            raise IntentError("不支持的样例格式。")
         seeds = row.get("examples", [])
         if isinstance(seeds, str):
             seeds = [line.strip() for line in seeds.splitlines() if line.strip()]
@@ -99,7 +123,7 @@ def validate_intents(rows: list[dict]) -> list[dict]:
     if sum(row["target"] for row in result) > 100000:
         raise IntentError("一次配置的生成总量不能超过 100000 条。")
     # The same prompt is used at training and inference time; never silently omit labels.
-    if len(classification_prompt(result).encode("utf-8")) > 12000:
+    if len(classification_prompt([x for x in result if x.get("format") != "alpaca"]).encode("utf-8")) > 12000:
         raise IntentError("类别定义总长度过大，请精简说明或拆分项目。")
     return result
 

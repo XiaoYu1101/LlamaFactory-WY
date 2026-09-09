@@ -1197,3 +1197,56 @@ code {
     display: none;
   }
 }
+.json-editor textarea,
+textarea.json-editor {
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+.json-file-import {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+  color: #315efb;
+}
+.json-file-import input {
+  max-width: 100%;
+}
+.parsed-examples {
+  margin-bottom: 20px;
+}
+.parsed-examples details {
+  margin-top: 12px;
+}
+.parsed-examples pre,
+.original-sample pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: auto;
+  padding: 12px;
+  background: #f6f8fc;
+  font-size: 12px;
+}
+.json-preview {
+  display: inline !important;
+  color: #25324b !important;
+}
+.json-preview strong {
+  color: #697991;
+  font-size: 11px;
+}
+.instruction-detail {
+  margin-top: 6px;
+  color: #7e899c;
+  font-size: 12px;
+}
+.instruction-detail summary {
+  cursor: pointer;
+}
+.answer-text {
+  color: #315efb;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

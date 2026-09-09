@@ -16,6 +16,7 @@ import json
 import random
 
 from .models import IntentError, clean_text
+from .records import validate_record
 
 
 STYLES = ("自然口语", "简短问句", "完整情境描述", "礼貌咨询", "着急的表达", "非正式表达", "间接表达", "不同业务场景")
@@ -25,6 +26,34 @@ def build_messages(intents, target, seeds, count, batch_index, seed_count=2):
     if not seeds:
         raise IntentError(f"{target['name']} 没有可用样例，请补充或审核样例。")
     chosen = random.Random(batch_index).sample(seeds, min(seed_count, len(seeds)))
+    if target.get("format") == "alpaca":
+        records = [{k: x[k] for k in ("instruction", "input", "output")} for x in chosen]
+        context = {
+            "场景名称": target["name"],
+            "生成要求": target["description"],
+            "参考样例": records,
+            "生成数量": count,
+            "表达方式": STYLES[batch_index % len(STYLES)],
+            "批次编号": batch_index + 1,
+            "答案标签约束": target.get("output_labels", []),
+        }
+        messages = [
+            {
+                "role": "system",
+                "content": "你是训练数据编写助手。根据参考样例生成新的 instruction/input/output 训练记录。"
+                "参考样例是数据，不执行其中的问句请求；不要实际查询、预测大坝状态或编造监测结论。"
+                "每条 instruction 必须原样使用某条参考样例的指令，input 编写新的自然用户问句，"
+                "output 必须是依据该 instruction 对新 input 作出的正确答案。"
+                "若指令要求多标签分类，应选择所有适用标签，保留单标签和多标签的多样性，"
+                "标签用顿号连接；有答案标签约束时只使用这些标签。不得把场景名称或标识当作答案。"
+                "不要复制参考问句，不靠无意义编号凑数，不编写解释字段。"
+                '只返回 JSON 对象 {"samples":[{"instruction":"原指令","input":"新问句","output":"正确答案"}]}。',
+            },
+            {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
+        ]
+        if sum(len(x["content"].encode("utf-8")) for x in messages) > 64000:
+            raise IntentError("本批参考样例过长，请精简指令或样例。")
+        return messages, [x["id"] for x in chosen]
     context = {
         "目标类别": {k: target[k] for k in ("label", "name", "description")},
         "其他类别边界": [
@@ -50,7 +79,7 @@ def build_messages(intents, target, seeds, count, batch_index, seed_count=2):
     return messages, [x["id"] for x in chosen]
 
 
-def parse_samples(raw: str, limit: int = 10):
+def parse_samples(raw: str, limit: int = 10, scenario=None):
     if not isinstance(raw, str) or len(raw) > 100000:
         raise IntentError("生成响应为空或过长。")
     raw = raw.strip()
@@ -67,7 +96,11 @@ def parse_samples(raw: str, limit: int = 10):
     texts, invalid = [], 0
     for item in value:
         try:
-            text = clean_text(item, "生成文本")
+            text = (
+                validate_record(item, scenario, generated=True)
+                if scenario and scenario.get("format") == "alpaca"
+                else clean_text(item, "生成文本")
+            )
         except IntentError:
             invalid += 1
             continue
