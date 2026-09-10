@@ -9,5 +9,5 @@
   "json_mode": true,
   "thinking": "disabled",
   "batch_size": 10,
-  "seed_count": 2
+  "seed_count": 3
 }

@@ -103,6 +103,7 @@ class JobRunner:
             intents = self.store.version(job["version_id"])["config"]
             target = next(x for x in intents if x["label"] == label)
             count = min(provider.config["batch_size"], remaining[label])
+            usage, previous = self.store.seed_usage(job_id, label)
             messages, seed_ids = build_messages(
                 intents,
                 target,
@@ -110,6 +111,9 @@ class JobRunner:
                 count,
                 job["attempts"],
                 provider.config["seed_count"],
+                usage,
+                previous,
+                job_id,
             )
             error, fatal, produced, invalid, texts = "", False, 0, 0, []
             try:

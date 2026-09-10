@@ -24,7 +24,7 @@ def training_values(export: dict, stages: dict, compute_type: str) -> dict:
         "top.checkpoint_path": [],
         "train.training_stage": stage_name,
         "train.dataset_dir": export["path"],
-        "train.dataset": ["wy_intent_train"],
+        "train.dataset": export.get("manifest", {}).get("training_datasets", ["wy_intent_train"]),
         "train.output_dir": f"wy_{export['id'][:8]}_{uid()[:8]}",
         "train.learning_rate": "5e-5",
         "train.num_train_epochs": "3.0",
@@ -60,6 +60,8 @@ def attach_training(engine, store, export_id, data):
     from ..extras.constants import TRAINING_STAGES
 
     export = get_export(store, export_id)
+    if export["manifest"].get("training_ready") is False:
+        raise IntentError(export["manifest"]["training_note"])
     get = lambda name: data.get(engine.manager.get_elem_by_id(name))
     if not get("top.model_path") or not get("top.model_name"):
         raise IntentError("请先在顶部选择训练模型和路径。API 仅生成数据，不替代本地训练模型。")
@@ -86,3 +88,31 @@ def attach_training(engine, store, export_id, data):
     updates[engine.manager.get_elem_by_id("top.checkpoint_path")] = gr.update(value=[], multiselect=True)
     yield updates
     yield from engine.runner.run_train(values)
+
+
+def configured_training_values(export, stages, precision, config, plan_id):
+    """Apply the small LoRA form to real native controls, with fresh adapter defaults."""
+    values = training_values(export, stages, precision)
+    for key in ("lora_rank", "lora_dropout", "lora_target", "gradient_accumulation_steps", "cutoff_len", "val_size"):
+        values["train." + key] = getattr(config, key)
+    values.update(
+        {
+            "top.model_path": config.model_name_or_path,
+            "top.template": config.template,
+            "top.quantization_bit": "none",
+            "top.booster": "auto",
+            "top.rope_scaling": "none",
+            "train.lora_alpha": config.lora_alpha or config.lora_rank * 2,
+            "train.learning_rate": str(config.learning_rate),
+            "train.num_train_epochs": str(config.num_train_epochs),
+            "train.batch_size": config.per_device_train_batch_size,
+            "train.compute_type": precision if config.precision == "auto" else config.precision,
+            "train.output_dir": f"wy_lora_{plan_id[:8]}_{uid()[:8]}",
+            "train.logging_steps": 10,
+            "train.save_steps": 100,
+            "train.extra_args": dump(
+                {"optim": "adamw_torch", "preprocessing_num_workers": 1, "dataloader_num_workers": 0}
+            ),
+        }
+    )
+    return values

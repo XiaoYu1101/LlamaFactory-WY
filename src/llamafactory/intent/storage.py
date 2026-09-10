@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .models import IntentError, clean_text, dump, fingerprint, integer, now, uid, validate_intents
-from .records import record_fingerprint, validate_record
+from .records import is_json_scenario, record_fingerprint, record_projection, stored_record, validate_record
 
 
 SCHEMA = """
@@ -57,6 +57,16 @@ CREATE TABLE IF NOT EXISTS exports (
  id TEXT PRIMARY KEY, version_id TEXT NOT NULL REFERENCES versions(id), path TEXT NOT NULL,
  manifest TEXT NOT NULL, created TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS label_tasks (
+ id TEXT PRIMARY KEY, status TEXT NOT NULL, input_hash TEXT NOT NULL, request_hash TEXT NOT NULL,
+ input_json TEXT NOT NULL, snapshot_json TEXT NOT NULL, result_json TEXT,
+ provider_json TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '', attempts INTEGER NOT NULL DEFAULT 1,
+ created TEXT NOT NULL, updated TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS label_tasks_status ON label_tasks(status,created);
+CREATE TABLE IF NOT EXISTS training_configs (
+ id TEXT PRIMARY KEY, export_id TEXT NOT NULL REFERENCES exports(id), config TEXT NOT NULL, created TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS training_links (
  id TEXT PRIMARY KEY, export_id TEXT NOT NULL REFERENCES exports(id), config TEXT NOT NULL, created TEXT NOT NULL
 );
@@ -76,9 +86,29 @@ class Store:
             db.executescript(SCHEMA)
             # Additive migration keeps existing workspaces, review history and exports intact.
             columns = {row[1] for row in db.execute("PRAGMA table_info(samples)")}
-            for column in ("instruction", "output", "original_instruction", "original_output"):
+            for column in (
+                "instruction",
+                "output",
+                "original_instruction",
+                "original_output",
+                "record_json",
+                "original_record_json",
+            ):
                 if column not in columns:
                     db.execute(f"ALTER TABLE samples ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
+            # Upgrade older three-field records without discarding their review state.
+            for row in db.execute("SELECT * FROM samples WHERE record_json='' AND instruction<>''").fetchall():
+                row = dict(row)
+                record, original = stored_record(row), stored_record(row, original=True)
+                db.execute(
+                    "UPDATE samples SET record_json=?,original_record_json=?,fingerprint=? WHERE id=?",
+                    (
+                        json.dumps(record, ensure_ascii=False),
+                        json.dumps(original, ensure_ascii=False),
+                        record_fingerprint(record),
+                        row["id"],
+                    ),
+                )
 
     @contextmanager
     def connect(self, write: bool = False):
@@ -99,7 +129,7 @@ class Store:
     @staticmethod
     def require(db, table: str, item_id: str):
         # Table names are fixed internal identifiers, never user input.
-        if table not in {"projects", "versions", "jobs", "samples", "exports"}:
+        if table not in {"projects", "versions", "jobs", "samples", "exports", "label_tasks"}:
             raise ValueError("Unknown internal table")
         row = db.execute(f"SELECT * FROM {table} WHERE id=?", (item_id,)).fetchone()
         if row is None:
@@ -122,12 +152,22 @@ class Store:
         row["version"] = self.version(row["current_version"])
         return row
 
-    def save_project(self, name: str, intents: list[dict], project_id: str | None = None) -> dict:
+    def save_project(
+        self, name: str, intents: list[dict], project_id: str | None = None, base_version_id: str | None = None
+    ) -> dict:
         name, intents = clean_text(name, "项目名称", 100), validate_intents(intents)
         config = dump(intents)
+        from .label_inference import verify_label_task
+
         with self.connect(True) as db:
+            for intent in intents:
+                verify_label_task(db, intent)
             if project_id:
                 project = self.require(db, "projects", project_id)
+                if base_version_id is not None and project["current_version"] != base_version_id:
+                    raise IntentError(
+                        "项目已有更新的配置，不能用旧任务草稿覆盖。请先切换到最新项目配置，再合并本次修改。"
+                    )
                 previous = self.require(db, "versions", project["current_version"])
                 if previous["config"] == config:
                     db.execute("UPDATE projects SET name=? WHERE id=?", (name, project_id))
@@ -146,7 +186,7 @@ class Store:
             db.execute("INSERT INTO versions VALUES (?,?,?,?)", (version_id, project_id, config, now()))
             db.execute("UPDATE projects SET name=?,current_version=? WHERE id=?", (name, version_id, project_id))
             for intent in intents:
-                if intent.get("format") == "alpaca":
+                if is_json_scenario(intent):
                     continue  # Reference JSON guides generation; it is not training output.
                 for seed in intent["examples"]:
                     self._insert_sample(db, version_id, intent["label"], seed, "user")
@@ -155,13 +195,13 @@ class Store:
     @staticmethod
     def _insert_sample(db, version_id, label, text, source, job_id=None, batch_id=None, seed_ids=None):
         record = validate_record(text) if isinstance(text, dict) else None
-        text = record["input"] if record else text
-        instruction, output = (record["instruction"], record["output"]) if record else ("", "")
+        instruction, text, output = record_projection(record) if record else ("", text, "")
+        record_json = json.dumps(record, ensure_ascii=False) if record else ""
         sample_id = uid()
         cursor = db.execute(
             "INSERT OR IGNORE INTO samples "
-            "(id,version_id,label,original,text,fingerprint,source,job_id,batch_id,seed_ids,created,instruction,output,original_instruction,original_output) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "(id,version_id,label,original,text,fingerprint,source,job_id,batch_id,seed_ids,created,instruction,output,original_instruction,original_output,record_json,original_record_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 sample_id,
                 version_id,
@@ -178,19 +218,27 @@ class Store:
                 output,
                 instruction,
                 output,
+                record_json,
+                record_json,
             ),
         )
         return sample_id if cursor.rowcount else None
 
-    def add_sample(self, version_id: str, label: str, text: str, instruction=None, output=None) -> str:
-        text = clean_text(text, "样本文本", 4000)
+    def add_sample(
+        self, version_id: str, label: str, text: str = "", instruction=None, output=None, record=None
+    ) -> str:
         with self.connect(True) as db:
             config = json.loads(self.require(db, "versions", version_id)["config"])
             if label not in {x["label"] for x in config}:
                 raise IntentError("请选择该配置版本中的类别。")
             scenario = next(x for x in config if x["label"] == label)
-            if scenario.get("format") == "alpaca":
-                text = validate_record(dict(instruction=instruction, input=text, output=output), scenario)
+            if is_json_scenario(scenario):
+                text = validate_record(
+                    record if record is not None else dict(instruction=instruction, input=text, output=output),
+                    scenario,
+                )
+            else:
+                text = clean_text(text, "样本文本", 4000)
             sample_id = self._insert_sample(db, version_id, label, text, "manual")
             if sample_id is None:
                 raise IntentError("同类别已有相同文本，包括已删除或驳回的记录。")
@@ -198,8 +246,9 @@ class Store:
 
     def seeds(self, version_id: str, label: str) -> list[dict]:
         scenario = next(x for x in self.version(version_id)["config"] if x["label"] == label)
-        if scenario.get("format") == "alpaca":
-            return [{"id": f"reference:{label}:{i}", **x} for i, x in enumerate(scenario["examples"])]
+        if is_json_scenario(scenario):
+            # Wrapping protects a user-provided "id" field from internal bookkeeping.
+            return [{"id": f"reference:{label}:{i}", "record": x} for i, x in enumerate(scenario["examples"])]
         with self.connect() as db:
             return [
                 dict(x)
@@ -216,7 +265,7 @@ class Store:
             x[0]
             for x in db.execute(
                 "SELECT fingerprint FROM samples WHERE version_id=? AND deleted=0 AND status<>'rejected' "
-                "GROUP BY fingerprint HAVING COUNT(DISTINCT CASE WHEN instruction='' THEN label ELSE output END)>1",
+                "GROUP BY fingerprint HAVING COUNT(DISTINCT CASE WHEN record_json='' AND instruction='' THEN label ELSE output END)>1",
                 (version_id,),
             )
         }
@@ -230,8 +279,8 @@ class Store:
                 clause += f" AND {column}=?"
                 values.append(value)
         if query:
-            clause += " AND (instr(text,?)>0 OR instr(instruction,?)>0 OR instr(output,?)>0)"
-            values.extend([str(query)] * 3)
+            clause += " AND (instr(text,?)>0 OR instr(instruction,?)>0 OR instr(output,?)>0 OR instr(record_json,?)>0)"
+            values.extend([str(query)] * 4)
         with self.connect() as db:
             count = db.execute(f"SELECT COUNT(*) FROM samples WHERE {clause}", values).fetchone()[0]
             page = min(page, max(1, (count + page_size - 1) // page_size))
@@ -244,6 +293,8 @@ class Store:
             ]
             conflicts = self.conflicts(db, version_id)
         for row in rows:
+            row["record"] = stored_record(row)
+            row["original_record"] = stored_record(row, original=True)
             row["conflict"] = row["fingerprint"] in conflicts and row["status"] != "rejected" and not row["deleted"]
         return rows, count, page
 
@@ -257,7 +308,15 @@ class Store:
         return {"groups": [dict(x) for x in rows], "conflicts": conflicts}
 
     def review(
-        self, version_id: str, selected: list[dict], action: str, text=None, label=None, instruction=None, output=None
+        self,
+        version_id: str,
+        selected: list[dict],
+        action: str,
+        text=None,
+        label=None,
+        instruction=None,
+        output=None,
+        record=None,
     ):
         if action not in {"approved", "rejected", "delete", "restore", "edit"} or not selected:
             raise IntentError("请先选择需要操作的样本。")
@@ -279,14 +338,25 @@ class Store:
                     if label not in valid_labels:
                         raise IntentError("类别不存在。")
                     scenario = next(x for x in config if x["label"] == label)
-                    after.update(text=clean_text(text, "样本文本", 4000), label=label, status="pending")
-                    if scenario.get("format") == "alpaca":
-                        record = validate_record(dict(instruction=instruction, input=text, output=output), scenario)
-                        after.update(text=record["input"], instruction=record["instruction"], output=record["output"])
-                        after["fingerprint"] = record_fingerprint(record)
+                    after.update(label=label, status="pending")
+                    if is_json_scenario(scenario):
+                        candidate = record
+                        if candidate is None:
+                            candidate = stored_record(before) or {}
+                            candidate.update(instruction=instruction, input=text, output=output)
+                        candidate = validate_record(candidate, scenario)
+                        instr, content, answer = record_projection(candidate)
+                        after.update(
+                            text=content,
+                            instruction=instr,
+                            output=answer,
+                            record_json=json.dumps(candidate, ensure_ascii=False),
+                        )
+                        after["fingerprint"] = record_fingerprint(candidate)
                     else:
-                        if before["instruction"]:
+                        if before["record_json"] or before["instruction"]:
                             raise IntentError("不能将 JSON 训练记录移入旧版单标签类别。")
+                        after["text"] = clean_text(text, "样本文本", 4000)
                         after["fingerprint"] = fingerprint(after["text"])
                 elif action in {"delete", "restore"}:
                     after.update(deleted=int(action == "delete"), status="pending")
@@ -297,7 +367,7 @@ class Store:
                 after["revision"] += 1
                 try:
                     db.execute(
-                        "UPDATE samples SET text=?,label=?,fingerprint=?,status=?,deleted=?,revision=?,instruction=?,output=? WHERE id=?",
+                        "UPDATE samples SET text=?,label=?,fingerprint=?,status=?,deleted=?,revision=?,instruction=?,output=?,record_json=? WHERE id=?",
                         tuple(
                             after[x]
                             for x in (
@@ -309,6 +379,7 @@ class Store:
                                 "revision",
                                 "instruction",
                                 "output",
+                                "record_json",
                                 "id",
                             )
                         ),
@@ -319,6 +390,43 @@ class Store:
                     "INSERT INTO review_events VALUES (?,?,?,?,?,?)",
                     (uid(), before["id"], action, dump(before), dump(after), now()),
                 )
+
+    def seed_usage(self, job_id, label):
+        usage, previous = {}, []
+        with self.connect() as db:
+            for row in db.execute(
+                "SELECT seed_ids FROM batches WHERE job_id=? AND label=? ORDER BY rowid", (job_id, label)
+            ):
+                previous = json.loads(row["seed_ids"])
+                for seed_id in previous:
+                    usage[seed_id] = usage.get(seed_id, 0) + 1
+        return usage, previous
+
+    def approve_pending(self, db, version_id):
+        self.require(db, "versions", version_id)
+        if db.execute(
+            "SELECT 1 FROM jobs WHERE version_id=? AND status IN ('queued','running','pausing','cancelling')",
+            (version_id,),
+        ).fetchone():
+            raise IntentError("请先暂停生成或等待任务完成，再一键审核。")
+        if self.conflicts(db, version_id):
+            raise IntentError("存在答案冲突，请先处理后再一键审核。")
+        rows = db.execute(
+            "SELECT * FROM samples WHERE version_id=? AND status='pending' AND deleted=0", (version_id,)
+        ).fetchall()
+        for row in rows:
+            before = dict(row)
+            after = {**before, "status": "approved", "revision": before["revision"] + 1}
+            db.execute("UPDATE samples SET status='approved',revision=revision+1 WHERE id=?", (before["id"],))
+            db.execute(
+                "INSERT INTO review_events VALUES (?,?,?,?,?,?)",
+                (uid(), before["id"], "approved", dump(before), dump(after), now()),
+            )
+        return len(rows)
+
+    def approve_all(self, version_id):
+        with self.connect(True) as db:
+            return self.approve_pending(db, version_id)
 
     def create_job(self, version_id: str, targets: dict[str, int], provider: dict) -> str:
         with self.connect(True) as db:
@@ -461,12 +569,12 @@ class Store:
             config = json.loads(self.require(db, "versions", job["version_id"])["config"])
             scenario = next(x for x in config if x["label"] == label)
             reference_keys = (
-                {record_fingerprint(x) for x in scenario["examples"]} if scenario.get("format") == "alpaca" else set()
+                {record_fingerprint(x) for x in scenario["examples"]} if is_json_scenario(scenario) else set()
             )
             for text in texts:
                 if accepted >= remaining:
                     break
-                if scenario.get("format") == "alpaca":
+                if is_json_scenario(scenario):
                     text = validate_record(text, scenario, generated=True)
                     if record_fingerprint(text) in reference_keys:
                         duplicates += 1

@@ -1250,3 +1250,120 @@ textarea.json-editor {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.schema-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0;
+}
+.training-mapping {
+  margin: 18px 0;
+}
+.training-mapping summary {
+  cursor: pointer;
+  color: #315efb;
+}
+.null-field {
+  margin: 18px 0;
+}
+.instruction-detail pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.example-mode-switch {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 20px;
+}
+.example-builder {
+  border: 1px solid #e4eaf5;
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 20px;
+  background: #fbfcff;
+}
+.builder-template {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.builder-template > .ant-select {
+  width: 100%;
+}
+.builder-help {
+  color: #66758d;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.builder-toolbar,
+.builder-add-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+.builder-toolbar > .ant-select {
+  min-width: 110px;
+}
+.builder-toolbar > span {
+  font-size: 12px;
+  color: #66758d;
+}
+.builder-add-field > .ant-input {
+  flex: 1;
+  min-width: 130px;
+}
+.builder-add-field > .ant-select {
+  width: 105px;
+}
+.builder-field-name {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  overflow-wrap: anywhere;
+}
+.builder-field-name code {
+  font-size: 12px;
+  color: #52627d;
+  white-space: normal;
+}
+.builder-nested {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.builder-object-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.builder-object-field small {
+  color: #8090a7;
+  margin-left: 6px;
+}
+.builder-array-item {
+  border: 1px solid #e5eaf4;
+  border-radius: 8px;
+  padding: 8px;
+  background: #f8faff;
+}
+.builder-item-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #64748b;
+}
+.example-builder .ant-table-cell {
+  vertical-align: top;
+}
+.example-builder .ant-table {
+  background: transparent;
+}

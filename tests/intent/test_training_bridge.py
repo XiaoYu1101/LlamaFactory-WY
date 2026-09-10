@@ -230,3 +230,132 @@ def test_training_monitor_keeps_original_progress_and_loss_outputs(bridge):
     assert frames[0][manager.get_elem_by_id("train.loss_viewer")] is loss
     assert "training log" in frames[-1][manager.get_elem_by_id("train.output_box")]
     assert not runner.running and runner.trainer is None
+
+
+def test_prepare_dataset_updates_native_training_controls_without_launch(bridge, monkeypatch):
+    from llamafactory.intent import ui as intent_ui
+
+    engine, ui, store, export, _ = bridge
+    monkeypatch.setattr(intent_ui, "get_service", lambda: SimpleNamespace(store=store))
+    with ui:
+        with gr.Tabs() as tabs:
+            engine.intent_tabs = tabs
+            with gr.Tab("Train", id="train"):
+                gr.Markdown("native controls already registered")
+            with gr.Tab("intent", id="intent"):
+                intent_ui.create_ant_page(engine)
+    handler = next(fn.fn for fn in ui.fns.values() if fn.fn and fn.fn.__name__ == "prepare_training")
+    updates = handler(export["id"])
+    assert updates[tabs]["selected"] == "train"
+    assert updates[engine.manager.get_elem_by_id("train.dataset")]["value"] == ["wy_intent_train"]
+    assert updates[engine.manager.get_elem_by_id("train.dataset_dir")]["value"].endswith(export["id"])
+    assert updates[engine.manager.get_elem_by_id("top.checkpoint_path")]["multiselect"]
+    with store.connect() as db:
+        assert db.execute("SELECT count(*) FROM training_links").fetchone()[0] == 0
+    with pytest.raises(gr.Error):
+        handler(None)
+
+
+def test_saved_lora_config_reaches_original_runner(bridge, monkeypatch):
+    from llamafactory.intent import ui as intent_ui
+    from llamafactory.intent.training_config import LoraConfig, save_plan
+
+    engine, ui, store, export, _ = bridge
+    plan = save_plan(
+        store,
+        export["id"],
+        LoraConfig(
+            model_name_or_path="/target/model",
+            template="qwen",
+            lora_rank=32,
+            lora_alpha=48,
+            lora_dropout=0.1,
+            lora_target="q_proj,v_proj",
+            learning_rate=0.0002,
+            num_train_epochs=2,
+            gradient_accumulation_steps=16,
+            cutoff_len=4096,
+            precision="bf16",
+        ),
+    )
+    monkeypatch.setattr(intent_ui, "get_service", lambda: SimpleNamespace(store=store))
+    with ui:
+        with gr.Tabs() as tabs:
+            engine.intent_tabs = tabs
+            with gr.Tab("intent", id="intent"):
+                intent_ui.create_ant_page(engine)
+    handler = next(fn.fn for fn in ui.fns.values() if fn.fn and fn.fn.__name__ == "prepare_saved_plan")
+    updates = handler(plan["id"], "Custom")
+    manager = engine.manager
+    values = {elem: elem.value for elem in engine.runner.train_input_elems}
+    values.update({elem: update["value"] for elem, update in updates.items() if "value" in update})
+    args = engine.runner._parse_train_args(values)
+    assert args["model_name_or_path"] == "/target/model" and args["finetuning_type"] == "lora"
+    assert args["lora_rank"] == 32 and args["lora_alpha"] == 48 and args["lora_dropout"] == 0.1
+    assert args["lora_target"] == "q_proj,v_proj" and args["learning_rate"] == 0.0002
+    assert args["num_train_epochs"] == 2 and args["gradient_accumulation_steps"] == 16
+    assert args["cutoff_len"] == 4096 and args["bf16"] and not args["fp16"]
+    assert args["dataset"] == "wy_intent_train" and "adapter_name_or_path" not in args
+    assert values[manager.get_elem_by_id("top.checkpoint_path")] == []
+    assert updates[tabs]["selected"] == "train" and not engine.runner.running
+    engine.runner.running = True
+    with pytest.raises(gr.Error, match="运行"):
+        handler(plan["id"], "Custom")
+
+
+def test_evaluation_data_transfer_preserves_selected_model_and_adapter(bridge, monkeypatch):
+    from llamafactory.intent import ui as intent_ui
+
+    engine, ui, store, export, _ = bridge
+    monkeypatch.setattr(intent_ui, "get_service", lambda: SimpleNamespace(store=store))
+    with ui:
+        with gr.Tabs() as tabs:
+            engine.intent_tabs = tabs
+            with gr.Tab("intent", id="intent"):
+                intent_ui.create_ant_page(engine)
+    handler = next(fn.fn for fn in ui.fns.values() if fn.fn and fn.fn.__name__ == "prepare_evaluation")
+    updates = handler(export["id"])
+    assert not any(elem in updates for elem in engine.manager.get_base_elems())
+    values = {elem: elem.value for elem in engine.manager.get_elem_list() if hasattr(elem, "value")}
+    values[engine.manager.get_elem_by_id("top.finetuning_type")] = "lora"
+    values[engine.manager.get_elem_by_id("top.checkpoint_path")] = ["trained_adapter"]
+    values.update({elem: update["value"] for elem, update in updates.items() if "value" in update})
+    args = engine.runner._parse_eval_args(values)
+    assert args["eval_dataset"] == "wy_intent_train"
+    assert args["dataset_dir"].endswith(export["id"])
+    assert args["model_name_or_path"] == "/models/test"
+    assert "trained_adapter" in args["adapter_name_or_path"]
+    assert args["do_predict"] and args["max_samples"] == export["count"]
+    assert updates[tabs]["selected"] == "eval"
+    with pytest.raises(gr.Error):
+        handler(None)
+    engine.runner.running = True
+    with pytest.raises(gr.Error, match="运行"):
+        handler(export["id"])
+    train_handler = next(fn.fn for fn in ui.fns.values() if fn.fn and fn.fn.__name__ == "prepare_training")
+    with pytest.raises(gr.Error, match="运行"):
+        train_handler(export["id"])
+
+
+def test_native_dataset_registry_reads_utf8_columns(tmp_path):
+    import builtins
+    from dataclasses import dataclass
+
+    folder = tmp_path / "中文数据"
+    folder.mkdir()
+    (folder / "dataset_info.json").write_text(
+        json.dumps(
+            {"test": {"file_name": "train.json", "columns": {"prompt": "问题", "response": "答案", "system": "系统"}}},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def legacy_locale_open(file, *args, **kwargs):
+        kwargs.setdefault("encoding", "ascii")
+        return builtins.open(file, *args, **kwargs)
+
+    namespace = dict(dataclass=dataclass, os=os, json=json, DATA_CONFIG="dataset_info.json", open=legacy_locale_open)
+    definitions("data/parser.py", {"DatasetAttr", "get_dataset_list"}, namespace)
+    result = namespace["get_dataset_list"](["test"], str(folder))[0]
+    assert (result.prompt, result.response, result.system) == ("问题", "答案", "系统")

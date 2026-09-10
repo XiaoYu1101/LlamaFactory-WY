@@ -18,6 +18,7 @@ import threading
 from pathlib import Path
 
 from .jobs import JobRunner
+from .label_inference import LabelInference
 from .models import IntentError
 from .providers import APIProvider, LocalProvider, read_config
 from .storage import Store
@@ -59,13 +60,18 @@ class IntentService:
             self.store.recover_jobs()
             self.jobs = JobRunner(self.store)
             self.config_path = config_path
+            self.label_tasks = LabelInference(self.store)
         except Exception:
             self.lock.close()
             raise
-        atexit.register(self.lock.close)
+        atexit.register(self.close)
 
-    def provider(self, chatter=None):
-        config = read_config(self.config_path)
+    def close(self):
+        self.label_tasks.close()
+        self.lock.close()
+
+    def provider(self, chatter=None, config=None):
+        config = config or read_config(self.config_path)
         if config["provider"] == "local":
             if chatter is None:
                 raise IntentError("本地模型模式需在完整 LlamaFactory WebUI 的 Chat 页面加载模型。")
@@ -73,8 +79,17 @@ class IntentService:
         return APIProvider(config)
 
     def start(self, version_id, chatter=None, label=None, amount=None):
-        provider = self.provider(chatter)
         config = self.store.version(version_id)["config"]
+        from .records import is_json_scenario
+
+        for scenario in config:
+            if (
+                (label is None or scenario["label"] == label)
+                and is_json_scenario(scenario)
+                and len(scenario["examples"]) < 4
+            ):
+                raise IntentError("此场景参考样例不足 4 条，请补充不同样例并保存新配置后生成。")
+        provider = self.provider(chatter)
         targets = {x["label"]: x["target"] for x in config}
         if label:
             if label not in targets:

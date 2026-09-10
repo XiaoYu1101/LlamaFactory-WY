@@ -65,7 +65,8 @@ def integer(value, field: str, minimum: int = 1, maximum: int = 100000) -> int:
 
 
 def validate_intents(rows: list[dict]) -> list[dict]:
-    from .records import parse_examples, validate_record
+    from .dataset_mapping import text_mapping
+    from .records import is_json_scenario, json_schema, parse_examples, validate_record
 
     if not isinstance(rows, list) or not 1 <= len(rows) <= 100:
         raise IntentError("请配置 1 到 100 个意图类别。")
@@ -77,8 +78,12 @@ def validate_intents(rows: list[dict]) -> list[dict]:
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", label) or label.casefold() in labels:
             raise IntentError("类别标识需以英文字母开头，使用字母、数字、下划线或短横线，且不能重复。")
         labels.add(label.casefold())
-        if row.get("format") == "alpaca":
+        if is_json_scenario(row):
             examples = parse_examples(row.get("examples"))
+            if len(examples) < 4:
+                raise IntentError(
+                    "每个生成场景至少需要 4 条不同的参考样例，最多 100 条；每批选取 3 条生成最多 10 条。"
+                )
             output_labels = row.get("output_labels", [])
             if not isinstance(output_labels, list) or len(output_labels) > 100:
                 raise IntentError("答案标签必须是最多 100 项的列表。")
@@ -91,10 +96,19 @@ def validate_intents(rows: list[dict]) -> list[dict]:
                 description=clean_text(row.get("description"), "生成要求"),
                 examples=examples,
                 target=integer(row.get("target", 1000), "生成数量"),
-                format="alpaca",
+                format=row["format"],
+                schema=json_schema(examples[0]),
                 output_labels=output_labels,
+                training_mapping=row.get("training_mapping"),
             )
-            scenario["examples"] = [validate_record(x, scenario) for x in examples]
+            if row.get("label_task_id") is not None:
+                scenario["label_task_id"] = clean_text(row["label_task_id"], "标签推断任务", 64)
+            # Validate constraints without rewriting the user reference record or its inference digest.
+            for example in examples:
+                validate_record(example, scenario)
+            if scenario["training_mapping"] is not None:
+                for example in examples:
+                    text_mapping(example, scenario["training_mapping"])
             result.append(scenario)
             continue
         if row.get("format") not in {None, "text"}:
@@ -123,7 +137,7 @@ def validate_intents(rows: list[dict]) -> list[dict]:
     if sum(row["target"] for row in result) > 100000:
         raise IntentError("一次配置的生成总量不能超过 100000 条。")
     # The same prompt is used at training and inference time; never silently omit labels.
-    if len(classification_prompt([x for x in result if x.get("format") != "alpaca"]).encode("utf-8")) > 12000:
+    if len(classification_prompt([x for x in result if not is_json_scenario(x)]).encode("utf-8")) > 12000:
         raise IntentError("类别定义总长度过大，请精简说明或拆分项目。")
     return result
 

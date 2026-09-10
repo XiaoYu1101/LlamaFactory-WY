@@ -480,6 +480,7 @@ def create_ant_page(engine):
     with gr.Row():
         export_choice = gr.Dropdown(label="已保存的数据版本", choices=[], value=None, scale=4)
         refresh = gr.Button("刷新数据版本")
+        prepare = gr.Button("将数据填入训练页")
         train = gr.Button("使用内置参数开始微调", variant="primary")
 
     def choices():
@@ -500,9 +501,129 @@ def create_ant_page(engine):
         except IntentError as error:
             raise gr.Error(str(error)) from None
 
+    def prepare_training(export_id):
+        from ..extras.constants import TRAINING_STAGES
+        from .export import get_export
+        from .training import training_values
+
+        if engine.runner.running:
+            raise gr.Error("已有训练或评测任务运行，不能替换参数。")
+        if not export_id:
+            raise gr.Error("请先刷新并选择已保存的数据版本。")
+        export = get_export(service.store, export_id)
+        if export["manifest"].get("training_ready") is False:
+            raise gr.Error(export["manifest"]["training_note"])
+        values = training_values(export, TRAINING_STAGES, "fp32")
+        updates = {engine.manager.get_elem_by_id(name): gr.update(value=value) for name, value in values.items()}
+        updates[engine.manager.get_elem_by_id("top.checkpoint_path")] = gr.update(value=[], multiselect=True)
+        updates[engine.intent_tabs] = gr.update(selected="train")
+        return updates
+
+    gr.Markdown(
+        "### 已保存的 LoRA 配置\n在工作台模型训练页保存配置后，点击刷新。顶部先选模型名称（自定义路径可选 Custom），再填入配置；填入后到 Train 核对并开始。"
+    )
+    with gr.Row():
+        plan_choice = gr.Dropdown(label="已保存的 LoRA 配置", choices=[], value=None, scale=4)
+        refresh_plans = gr.Button("刷新 LoRA 配置")
+        prepare_plan = gr.Button("将 LoRA 配置填入训练页")
+
+    def plan_choices():
+        from .training_config import list_plans
+
+        return gr.update(
+            choices=[
+                (f"{p['config']['model_name_or_path']} · {p['created']} · {p['id'][:8]}", p["id"])
+                for p in list_plans(service.store)
+            ]
+        )
+
+    def prepare_saved_plan(plan_id, model_name):
+        import torch
+
+        from ..extras.constants import TRAINING_STAGES
+        from .training import configured_training_values
+        from .training_config import LoraConfig, get_plan, validate_plan
+
+        if engine.runner.running:
+            raise gr.Error("已有训练或评测任务运行，不能替换参数。")
+        if not model_name:
+            raise gr.Error("请先在顶部选择模型名称；自定义模型可选择 Custom。")
+        try:
+            plan = get_plan(service.store, plan_id)
+            config = LoraConfig(**plan["config"])
+            export = validate_plan(service.store, plan["export_id"], config)
+        except IntentError as error:
+            raise gr.Error(str(error)) from None
+        precision = (
+            "bf16"
+            if torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+            else "fp16"
+            if torch.cuda.is_available()
+            else "fp32"
+        )
+        values = configured_training_values(export, TRAINING_STAGES, precision, config, plan_id)
+        # Reset prior advanced training options so a previous session cannot silently enable another method.
+        base = engine.manager.get_base_elems()
+        updates = {elem: gr.update(value=elem.value) for elem in engine.runner.train_input_elems if elem not in base}
+        updates.update({engine.manager.get_elem_by_id(name): gr.update(value=value) for name, value in values.items()})
+        updates[engine.manager.get_elem_by_id("top.checkpoint_path")] = gr.update(value=[], multiselect=True)
+        updates[engine.intent_tabs] = gr.update(selected="train")
+        return updates
+
+    refresh_plans.click(plan_choices, outputs=plan_choice)
+    prepare_plan.click(
+        prepare_saved_plan,
+        inputs=[plan_choice, engine.manager.get_elem_by_id("top.model_name")],
+        outputs=training_outputs(engine) + [engine.intent_tabs],
+    )
+
+    prepare.click(prepare_training, inputs=export_choice, outputs=training_outputs(engine) + [engine.intent_tabs])
     refresh.click(choices, outputs=export_choice)
     train.click(
         start_training,
         set(engine.runner.train_input_elems) | {export_choice},
         training_outputs(engine),
+    )
+
+    gr.Markdown(
+        "### 填入独立评测数据\n选择另行准备并审核导出的测试数据版本。这里只填入数据，不自动开始评测；顶部保留你选择的基座模型和 LoRA 适配器。不要将训练数据当作独立测试集。"
+    )
+    with gr.Row():
+        eval_export = gr.Dropdown(label="独立评测数据版本", choices=[], value=None, scale=4)
+        refresh_eval = gr.Button("刷新评测数据版本")
+        prepare_eval = gr.Button("将数据填入评测页")
+
+    def prepare_evaluation(export_id):
+        from .export import get_export
+        from .models import uid
+
+        if engine.runner.running:
+            raise gr.Error("已有训练或评测任务运行，不能替换参数。")
+        if not export_id:
+            raise gr.Error("请选择独立评测数据版本。")
+        try:
+            export = get_export(service.store, export_id)
+        except IntentError as error:
+            raise gr.Error(str(error)) from None
+        if not export["manifest"].get("training_ready"):
+            raise gr.Error("评测数据缺少问题与参考答案的字段映射，请配置映射后重新导出。")
+        values = {
+            "eval.dataset_dir": export["path"],
+            "eval.dataset": export["manifest"]["training_datasets"],
+            "eval.max_samples": str(export["manifest"]["count"]),
+            "eval.output_dir": f"wy_eval_{export_id[:8]}_{uid()[:8]}",
+        }
+        updates = {engine.manager.get_elem_by_id(name): gr.update(value=value) for name, value in values.items()}
+        updates[engine.intent_tabs] = gr.update(selected="eval")
+        return updates
+
+    refresh_eval.click(choices, outputs=eval_export)
+    prepare_eval.click(
+        prepare_evaluation,
+        inputs=eval_export,
+        outputs=[
+            engine.manager.get_elem_by_id("eval." + key)
+            for key in ("dataset_dir", "dataset", "max_samples", "output_dir")
+        ]
+        + [engine.intent_tabs],
     )

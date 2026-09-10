@@ -50,24 +50,43 @@ def create_ui(demo_mode: bool = False) -> "gr.Blocks":
         engine.manager.add_elems("top", create_top())
         lang: gr.Dropdown = engine.manager.get_elem_by_id("top.lang")
 
-        with gr.Tab("Train"):
-            engine.manager.add_elems("train", create_train_tab(engine))
+        with gr.Tabs() as workflow_tabs:
+            engine.intent_tabs = workflow_tabs
+            with gr.Tab("Train", id="train", elem_id="wy-native-train"):
+                engine.manager.add_elems("train", create_train_tab(engine))
 
-        with gr.Tab("Evaluate & Predict"):
-            engine.manager.add_elems("eval", create_eval_tab(engine))
+            with gr.Tab("Evaluate & Predict", id="eval", elem_id="wy-native-eval"):
+                engine.manager.add_elems("eval", create_eval_tab(engine))
 
-        with gr.Tab("Chat"):
-            engine.manager.add_elems("infer", create_infer_tab(engine))
+            with gr.Tab("Chat"):
+                engine.manager.add_elems("infer", create_infer_tab(engine))
 
-        if not demo_mode:
-            with gr.Tab("意图分类"):
-                create_ant_page(engine)
+            if not demo_mode:
+                with gr.Tab("意图分类", id="intent"):
+                    create_ant_page(engine)
 
-            with gr.Tab("Export"):
-                engine.manager.add_elems("export", create_export_tab(engine))
+                with gr.Tab("Export"):
+                    engine.manager.add_elems("export", create_export_tab(engine))
 
         engine.manager.add_elems("footer", create_footer())
         demo.load(engine.resume, outputs=engine.manager.get_elem_list(), concurrency_limit=None)
+        demo.load(
+            fn=None,
+            js="""() => {
+            const navigate = (tab) => {
+                if (!["train", "eval"].includes(tab)) return;
+                const button = document.getElementById(`wy-native-${tab}-button`);
+                if (button) { button.click(); window.scrollTo({top: 0, behavior: "smooth"}); }
+            };
+            if (window.__wyNavigate) window.removeEventListener("message", window.__wyNavigate);
+            window.__wyNavigate = (event) => {
+                const frame = document.querySelector('iframe[title="意图分类工作台"]');
+                if (event.origin === window.location.origin && event.source === frame?.contentWindow && event.data?.type === "wy-native-tab") navigate(event.data.tab);
+            };
+            window.addEventListener("message", window.__wyNavigate);
+            navigate(new URLSearchParams(window.location.search).get("wy_tab"));
+        }""",
+        )
         lang.change(engine.change_lang, [lang], engine.manager.get_elem_list(), queue=False)
         lang.input(save_config, inputs=[lang], queue=False)
 

@@ -22,7 +22,23 @@ def main():
     parser.add_argument("--port", type=int, default=7861)
     parser.add_argument("--data-dir", default=os.getenv("WY_INTENT_HOME", "workspace/intent"))
     parser.add_argument("--config", default=os.getenv("WY_INTENT_CONFIG", "config/intent_generation.json"))
+    parser.add_argument("--full", action="store_true", help="启动含原生训练、评测、Chat 和数据工作台的完整 WebUI")
     args = parser.parse_args()
+    if args.full:
+        os.environ.update(
+            WY_INTENT_HOME=args.data_dir,
+            WY_INTENT_CONFIG=args.config,
+            GRADIO_SERVER_NAME=args.host,
+            GRADIO_SERVER_PORT=str(args.port),
+        )
+        try:
+            from ..webui.interface import run_web_ui
+        except ImportError as error:
+            parser.exit(
+                1, f"完整模式缺少依赖：{error}\n请先执行 python -m pip install -e . 并配置模型所需的训练环境。\n"
+            )
+        run_web_ui()
+        return
     import uvicorn
 
     from .api import create_app

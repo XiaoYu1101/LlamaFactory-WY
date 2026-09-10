@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ipaddress
 import json
 import os
 import urllib.error
@@ -35,7 +36,7 @@ DEFAULT_CONFIG = {
     "json_mode": True,
     "thinking": "disabled",
     "batch_size": 10,
-    "seed_count": 2,
+    "seed_count": 3,
 }
 
 
@@ -56,6 +57,22 @@ def local_settings(path: str | Path = ".env") -> dict:
     return values
 
 
+def private_endpoint(url):
+    host = urllib.parse.urlsplit(url).hostname
+    if host == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host or "")
+        return address.is_loopback or address.is_private
+    except ValueError:
+        return False
+
+
+def configured_key(config):
+    name = config["api_key_env"]
+    return os.environ[name] if name in os.environ else local_settings().get(name, "")
+
+
 def read_config(path: str | Path | None = None) -> dict:
     if path is None:
         path = os.getenv("WY_INTENT_CONFIG", "config/intent_generation.json")
@@ -71,16 +88,37 @@ def read_config(path: str | Path | None = None) -> dict:
         config.update(content)
     elif str(path) != "config/intent_generation.json":
         raise IntentError("指定的生成配置文件不存在。")
+    values = {**local_settings(), **os.environ}
+    overrides = {
+        key: values[f"WY_INTENT_{key.upper()}"] for key in DEFAULT_CONFIG if f"WY_INTENT_{key.upper()}" in values
+    }
+    # Switching endpoints must never implicitly send the previous service's credential.
+    if "base_url" in overrides or "WY_INTENT_API_KEY" in values:
+        config["api_key_env"] = "WY_INTENT_API_KEY"
+    if "base_url" in overrides:
+        config.update(model="auto", json_mode=False, thinking=None)
+    for key, value in overrides.items():
+        if key == "json_mode":
+            if value.lower() not in {"true", "false", "1", "0"}:
+                raise IntentError("WY_INTENT_JSON_MODE 需要为 true 或 false。")
+            value = value.lower() in {"true", "1"}
+        elif key == "thinking" and value.lower() in {"", "none", "null"}:
+            value = None
+        config[key] = value
+    if isinstance(config["base_url"], str):
+        config["base_url"] = config["base_url"].strip().rstrip("/")
+    if isinstance(config["model"], str):
+        config["model"] = config["model"].strip() or "auto"
     if config["provider"] not in {"openai_compatible", "local"}:
         raise IntentError("provider 必须为 openai_compatible 或 local。")
     for field, minimum, maximum in (
         ("batch_size", 1, 10),
-        ("seed_count", 1, 2),
+        ("seed_count", 1, 3),
         ("timeout_seconds", 5, 180),
         ("max_tokens", 128, 8192),
     ):
         config[field] = integer(config[field], field, minimum, maximum)
-    if not isinstance(config["model"], str) or not config["model"].strip():
+    if not isinstance(config["model"], str):
         raise IntentError("生成配置需要填写 model。")
     try:
         temperature = float(config["temperature"])
@@ -94,10 +132,12 @@ def read_config(path: str | Path | None = None) -> dict:
     if not isinstance(config["api_key_env"], str) or not config["api_key_env"].isidentifier():
         raise IntentError("api_key_env 必须是合法的环境变量名。")
     parsed = urllib.parse.urlsplit(config["base_url"])
-    if parsed.scheme != "https" and not (parsed.scheme == "http" and parsed.hostname in {"localhost", "127.0.0.1"}):
-        raise IntentError("API 地址需要使用 HTTPS；仅本机调试允许 HTTP。")
+    if parsed.scheme != "https" and not (parsed.scheme == "http" and private_endpoint(config["base_url"])):
+        raise IntentError("API 地址需要使用 HTTPS；本机或局域网 IP 允许 HTTP。")
     if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise IntentError("API 地址不能携带账号、密钥、查询参数或片段。")
+    if not parsed.path and parsed.hostname != "api.deepseek.com":
+        config["base_url"] += "/v1"
     return config
 
 
@@ -108,13 +148,57 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class APIProvider:
-    def __init__(self, config: dict, api_key: str | None = None):
+    def __init__(self, config: dict, api_key: str | None = None, resolve_model=True):
         self.config = dict(config)
-        self._api_key = api_key or os.getenv(config["api_key_env"]) or local_settings().get(config["api_key_env"], "")
-        if not self._api_key:
+        self._api_key = configured_key(config) if api_key is None else api_key
+        if not self._api_key and not private_endpoint(config["base_url"]):
             raise ProviderError(f"尚未配置 API 密钥，请在本机 .env 或环境变量中设置 {config['api_key_env']}。")
-        self.descriptor = {"kind": "openai_compatible", **{k: v for k, v in config.items() if k != "api_key_env"}}
         self.opener = urllib.request.build_opener(NoRedirect())
+        if resolve_model and self.config["model"].lower() in {"", "auto"}:
+            models = self.models()
+            if len(models) != 1:
+                raise ProviderError(
+                    "服务提供多个模型，请在 .env 的 WY_INTENT_MODEL 中填写一个完整名称：" + "、".join(models[:20])
+                )
+            self.config["model"] = models[0]
+        self.descriptor = {"kind": "openai_compatible", **{k: v for k, v in self.config.items() if k != "api_key_env"}}
+
+    def headers(self):
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        return headers
+
+    def models(self):
+        request = urllib.request.Request(self.config["base_url"].rstrip("/") + "/models", headers=self.headers())
+        try:
+            with self.opener.open(request, timeout=min(10, self.config["timeout_seconds"])) as response:
+                raw = response.read(1024 * 1024 + 1)
+            if len(raw) > 1024 * 1024:
+                raise ProviderError("模型列表过大，请手动填写 WY_INTENT_MODEL。")
+            data = json.loads(raw)["data"]
+            if not isinstance(data, list):
+                raise ValueError("invalid model list")
+            models = list(
+                dict.fromkeys(
+                    x["id"]
+                    for x in data
+                    if isinstance(x, dict) and isinstance(x.get("id"), str) and x["id"].strip() and len(x["id"]) <= 512
+                )
+            )
+            if not models:
+                raise ProviderError("服务没有返回可用模型，请先加载模型，或手动填写 WY_INTENT_MODEL。")
+            return models
+        except ProviderError:
+            raise
+        except urllib.error.HTTPError as error:
+            raise ProviderError(
+                f"获取模型列表失败（HTTP {error.code}），请检查服务地址与密钥；不支持 /models 的服务需手动填写 WY_INTENT_MODEL。"
+            ) from None
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+            raise ProviderError("无法连接模型列表接口，请检查服务地址及模型服务是否已启动。", retryable=True) from None
+        except (ValueError, KeyError, TypeError):
+            raise ProviderError("模型列表不是兼容格式，请手动填写 WY_INTENT_MODEL。") from None
 
     def session(self):
         return nullcontext()
@@ -135,7 +219,7 @@ class APIProvider:
         request = urllib.request.Request(
             url,
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-            headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
+            headers=self.headers(),
             method="POST",
         )
         try:

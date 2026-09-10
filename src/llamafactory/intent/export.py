@@ -18,17 +18,19 @@ import os
 import zipfile
 from pathlib import Path
 
+from .dataset_mapping import dataset_mapping
 from .models import IntentError, classification_prompt, dump, now, uid
-from .records import validate_record
+from .records import is_json_scenario, stored_record, validate_record
 
 
-def freeze_dataset(store, version_id: str) -> dict:
+def freeze_dataset(store, version_id: str, approve_pending=False) -> dict:
     """Freeze exactly the reviewed content in one transaction, then publish an immutable export."""
     export_id = uid()
     parent = store.root / "datasets"
     parent.mkdir(exist_ok=True)
     staging, destination = parent / f".tmp-{export_id}", parent / export_id
     with store.connect(True) as db:
+        approved_now = store.approve_pending(db, version_id) if approve_pending else 0
         version = store.require(db, "versions", version_id)
         intents = json.loads(version["config"])
         if db.execute(
@@ -45,7 +47,7 @@ def freeze_dataset(store, version_id: str) -> dict:
         samples = [
             dict(x)
             for x in db.execute(
-                "SELECT id,label,instruction,text,output,source,revision,seed_ids FROM samples "
+                "SELECT id,label,instruction,text,output,record_json,source,revision,seed_ids FROM samples "
                 "WHERE version_id=? AND deleted=0 AND status='approved' ORDER BY label,id",
                 (version_id,),
             )
@@ -53,21 +55,40 @@ def freeze_dataset(store, version_id: str) -> dict:
         missing = {x["label"] for x in intents} - {x["label"] for x in samples}
         if missing:
             raise IntentError("以下类别没有已通过样本：" + "、".join(sorted(missing)))
-        prompt = classification_prompt([x for x in intents if x.get("format") != "alpaca"])
+        prompt = classification_prompt([x for x in intents if not is_json_scenario(x)])
         scenarios = {x["label"]: x for x in intents}
-        training = [
-            validate_record(
-                dict(instruction=x["instruction"], input=x["text"], output=x["output"]), scenarios[x["label"]]
+        training, mappings, grouped = [], [], {}
+        for row in samples:
+            scenario = scenarios[row["label"]]
+            record = (
+                validate_record(stored_record(row), scenario)
+                if is_json_scenario(scenario)
+                else {"instruction": prompt, "input": row["text"], "output": row["label"]}
             )
-            if scenarios[x["label"]].get("format") == "alpaca"
-            else {"instruction": prompt, "input": x["text"], "output": x["label"]}
-            for x in samples
-        ]
+            training.append(record)
+            grouped.setdefault(row["label"], []).append(record)
+            mappings.append(dataset_mapping(record, scenario.get("training_mapping")))
+        training_ready = all(x is not None for x in mappings)
         contents = {
-            "train.json": dump(training),
-            "dataset_info.json": dump({"wy_intent_train": {"file_name": "train.json", "formatting": "alpaca"}}),
-            "reviewed_samples.json": dump(samples),
+            "train.json": json.dumps(training, ensure_ascii=False, indent=2),
+            "reviewed_samples.json": dump([{**x, "record": stored_record(x)} for x in samples]),
         }
+        registry = {}
+        if training_ready and all(x == mappings[0] for x in mappings):
+            registry["wy_intent_train"] = {"file_name": "train.json", **mappings[0]}
+        elif training_ready:
+            # Different scenarios can use different original schemas without flattening them.
+            for index, (label, rows) in enumerate(grouped.items(), 1):
+                local_mappings = [dataset_mapping(x, scenarios[label].get("training_mapping")) for x in rows]
+                if not all(x == local_mappings[0] for x in local_mappings):
+                    training_ready = False
+                    break
+                file_name = f"train_{index}.json"
+                contents[file_name] = json.dumps(rows, ensure_ascii=False, indent=2)
+                registry[f"wy_intent_train_{index}"] = {"file_name": file_name, **local_mappings[0]}
+        if not training_ready:
+            registry = {}
+        contents["dataset_info.json"] = dump(registry)
         hashes = {name: hashlib.sha256(value.encode("utf-8")).hexdigest() for name, value in contents.items()}
         manifest = {
             "id": export_id,
@@ -75,16 +96,26 @@ def freeze_dataset(store, version_id: str) -> dict:
             "project_id": version["project_id"],
             "created": now(),
             "count": len(samples),
+            "approved_now": approved_now,
             "labels": intents,
-            "classification_prompt": prompt if any(x.get("format") != "alpaca" for x in intents) else None,
-            "instructions": list(dict.fromkeys(x["instruction"] for x in training)),
-            "reference_samples_included": False if all(x.get("format") == "alpaca" for x in intents) else None,
+            "classification_prompt": prompt if any(not is_json_scenario(x) for x in intents) else None,
+            "instructions": list(
+                dict.fromkeys(x["instruction"] for x in training if isinstance(x.get("instruction"), str))
+            ),
+            "training_ready": training_ready,
+            "training_datasets": list(registry),
+            "training_note": (
+                "训练字段已映射，system 列和对话角色按原数据登记。"
+                if training_ready
+                else "部分记录未识别为可训练格式或缺少一致的字段映射。JSON 已完整保留；请在场景中配置训练字段映射，或自行按 LlamaFactory 格式准备训练配置。"
+            ),
+            "reference_samples_included": False if all(is_json_scenario(x) for x in intents) else None,
             "files": hashes,
             "evaluation": "未自动划分评测集；请另行准备独立测试数据。",
         }
         staging.mkdir()
         for name, content in {**contents, "manifest.json": dump(manifest)}.items():
-            (staging / name).write_text(content, encoding="utf-8")
+            (staging / name).write_bytes(content.encode("utf-8"))
         with zipfile.ZipFile(staging / "dataset.zip", "w", zipfile.ZIP_DEFLATED) as archive:
             for name in [*contents, "manifest.json"]:
                 archive.write(staging / name, arcname=name)

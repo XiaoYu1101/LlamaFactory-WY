@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   App,
@@ -46,20 +46,59 @@ import {
 } from "@ant-design/icons";
 import type { TableColumnsType } from "antd";
 import "./style.css";
+import TrainingPanel from "./TrainingPanel";
+import LabelTaskDrawer, {
+  labelTaskStatus,
+  stableJSON,
+} from "./LabelTaskDrawer";
+import type { LabelTask, LabelTaskList } from "./LabelTaskDrawer";
+import ExampleBuilder, { defaultExamples } from "./ExampleBuilder";
 
-type TrainingRecord = { instruction: string; input: string; output: string };
+type JSONValue =
+  string | number | boolean | null | JSONValue[] | { [key: string]: JSONValue };
+type TrainingRecord = { [key: string]: JSONValue };
+type RecordSchema = { type: string; properties?: Record<string, RecordSchema> };
+type TrainingMapping = Partial<
+  Record<"prompt" | "query" | "response" | "system", string>
+>;
+const jsonScenario = (item?: Intent) =>
+  item?.format === "alpaca" || item?.format === "json";
+const displayValue = (value: JSONValue | undefined) =>
+  typeof value === "string" ? value : JSON.stringify(value, null, 2);
+const recordFields = (record: TrainingRecord) =>
+  Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [
+      key,
+      value !== null && typeof value === "object"
+        ? JSON.stringify(value, null, 2)
+        : value,
+    ]),
+  );
+const fieldLabel = (key: string) =>
+  ({
+    system: "系统提示 / system",
+    instruction: "任务指令 / instruction",
+    input: "输入 / input",
+    output: "答案 / output",
+    messages: "对话 / messages",
+  })[key] || key;
 type ParsedExamples = {
   examples: TrainingRecord[];
   count: number;
   output_labels: string[];
+  schema: RecordSchema;
+  training_mapping: TrainingMapping | null;
 };
 type Intent = {
   label: string;
   name: string;
   description: string;
   examples: (TrainingRecord | string)[];
-  format?: "alpaca" | "text";
+  format?: "alpaca" | "json" | "text";
+  schema?: RecordSchema;
+  training_mapping?: TrainingMapping | null;
   output_labels?: string[];
+  label_task_id?: string;
   target: number;
 };
 type Project = {
@@ -78,6 +117,8 @@ type Sample = {
   output: string;
   original_instruction: string;
   original_output: string;
+  record?: TrainingRecord | null;
+  original_record?: TrainingRecord | null;
   status: string;
   source: string;
   conflict: boolean;
@@ -98,7 +139,12 @@ type Export = {
   id: string;
   path: string;
   created: string;
-  manifest: { count: number };
+  manifest: {
+    count: number;
+    training_ready?: boolean;
+    training_note?: string;
+    training_datasets?: string[];
+  };
 };
 type Version = {
   id: string;
@@ -119,9 +165,10 @@ type Settings = {
   integrated: boolean;
   api_key_env: string;
   api_key_configured: boolean;
+  api_key_required?: boolean;
   config_path: string;
 };
-type Page = "config" | "generate" | "review" | "versions";
+type Page = "config" | "generate" | "review" | "versions" | "train" | "eval";
 const states: Record<string, string> = {
   pending: "待审核",
   approved: "已通过",
@@ -150,15 +197,19 @@ const nav = [
   { key: "generate", icon: <ExperimentOutlined />, label: "样本生成" },
   { key: "review", icon: <FileDoneOutlined />, label: "数据审核" },
   { key: "versions", icon: <DatabaseOutlined />, label: "数据版本" },
+  { key: "train", icon: <ExperimentOutlined />, label: "模型训练" },
+  { key: "eval", icon: <CheckCircleOutlined />, label: "模型评测" },
 ];
 const copy: Record<Page, [string, string]> = {
+  train: ["训练基座模型", "使用 LlamaFactory 原生微调流程与训练监控。"],
+  eval: ["评测与预测", "使用 LlamaFactory 原生评测流程检查模型效果。"],
   config: [
     "用 JSON 样例扩展训练集",
-    "配置生成场景，粘贴完整 JSON 样例，生成并审核 instruction / input / output 训练记录。",
+    "填写样例表格或导入 JSON，按样例的全部字段、类型与嵌套结构扩写、审核和导出。",
   ],
   generate: [
     "让样例变成数据集",
-    "按照参考 JSON 的任务和答案格式扩写，支持单标签、多标签及其他文本答案。",
+    "按照参考样例的任务与数据结构扩写，生成结果通过字段和类型校验后入库。",
   ],
   review: [
     "把好每一条数据的质量",
@@ -230,13 +281,27 @@ function Workbench() {
   const [poll, setPoll] = useState(0);
   const [busy, setBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [initial, setInitial] = useState(true);
   const [draftName, setDraftName] = useState("");
   const [draft, setDraft] = useState<Intent[]>([]);
   const [dirty, setDirty] = useState(false);
   const [intentEdit, setIntentEdit] = useState<number | null>(null);
   const [intentForm] = Form.useForm();
+  const restoredDraft = useRef(false);
+  const [labelTasksOpen, setLabelTasksOpen] = useState(false);
+  const [labelTasksPage, setLabelTasksPage] = useState(1);
+  const [labelTaskPoll, setLabelTaskPoll] = useState(0);
+  const [activeLabelId, setActiveLabelId] = useState("");
+  const [appliedLabelId, setAppliedLabelId] = useState("");
+  const [labelStarting, setLabelStarting] = useState(false);
+  const descriptionText = Form.useWatch("description", intentForm);
+
   const exampleText = Form.useWatch("examples", intentForm);
+  const mappingMode = Form.useWatch("mapping_mode", intentForm);
+  const [exampleMode, setExampleMode] = useState<"json" | "table">("json");
+  const [tableExamples, setTableExamples] = useState<TrainingRecord[]>([]);
+  const [builderVersion, setBuilderVersion] = useState(0);
   const [parsedExamples, setParsedExamples] = useState<ParsedExamples | null>(
     null,
   );
@@ -255,6 +320,30 @@ function Workbench() {
   const [sampleEdit, setSampleEdit] = useState<Sample | "new" | null>(null);
   const [sampleForm] = Form.useForm();
   const sampleLabel = Form.useWatch("label", sampleForm);
+  const labelTasks = useData<LabelTaskList>(
+    `/label-tasks?page=${labelTasksPage}`,
+    tick + labelTaskPoll,
+  );
+  const activeLabelTask = useData<LabelTask>(
+    activeLabelId ? `/label-tasks/${activeLabelId}` : null,
+    tick + labelTaskPoll,
+  );
+  const labelInFlight =
+    labelStarting ||
+    (!!activeLabelId &&
+      !activeLabelTask.error &&
+      (!activeLabelTask.data ||
+        ["queued", "running"].includes(activeLabelTask.data.status)));
+  const sameLabelInput =
+    !!activeLabelTask.data &&
+    !!parsedExamples &&
+    stableJSON(activeLabelTask.data.input) ===
+      stableJSON({
+        examples: parsedExamples.examples,
+        description: (descriptionText || "").trim(),
+      });
+  const labelReady =
+    activeLabelTask.data?.status === "completed" && sameLabelInput;
   const projects = useData<Project[]>("/projects", tick);
   const project = useData<Project>(
     projectId ? `/projects/${projectId}` : null,
@@ -281,6 +370,20 @@ function Workbench() {
   const refresh = () => setTick((t) => t + 1);
   const intents = version.data?.config || [];
   const sampleScenario = intents.find((x) => x.label === sampleLabel);
+  const firstExample = sampleScenario?.examples[0];
+  const sampleTemplate: TrainingRecord =
+    sampleEdit && sampleEdit !== "new" && sampleEdit.label === sampleLabel
+      ? sampleEdit.record || {
+          instruction: sampleEdit.instruction,
+          input: sampleEdit.text,
+          output: sampleEdit.output,
+        }
+      : typeof firstExample === "object"
+        ? firstExample
+        : {};
+  const answerField = ["output", "answer", "response", "completion"].find(
+    (key) => typeof sampleTemplate[key] === "string",
+  );
   const labelOptions = intents.map((x) => ({ value: x.label, label: x.name }));
   const groups = version.data?.counts.groups.filter((x) => !x.deleted) || [];
   const count = (s?: string) =>
@@ -308,13 +411,13 @@ function Workbench() {
     }
   }, [projects.data, initial]);
   useEffect(() => {
-    if (project.data) {
+    if (project.data && !restoredDraft.current) {
       setVersionId(project.data.current_version);
       setDraftName(project.data.name);
     }
   }, [project.data?.id, project.data?.current_version]);
   useEffect(() => {
-    if (version.data) {
+    if (version.data && !restoredDraft.current) {
       setDraft(version.data.config);
       setDirty(false);
     }
@@ -359,8 +462,12 @@ function Workbench() {
         .then((result) => {
           if (!current) return;
           setParsedExamples(result);
-          if (intentForm.getFieldValue("output_labels") === undefined)
-            intentForm.setFieldValue("output_labels", result.output_labels);
+
+          if (intentForm.getFieldValue("mapping_mode") !== "custom")
+            intentForm.setFieldValue(
+              "training_mapping",
+              result.training_mapping || {},
+            );
         })
         .catch((e) => {
           if (current) setExampleError(e.message);
@@ -375,10 +482,102 @@ function Workbench() {
     };
   }, [exampleText, intentEdit]);
 
+  useEffect(() => {
+    if (!labelTasksOpen && !labelTasks.data?.active && !labelInFlight) return;
+    const timer = window.setInterval(
+      () => setLabelTaskPoll((v) => v + 1),
+      2000,
+    );
+    return () => window.clearInterval(timer);
+  }, [labelTasksOpen, labelTasks.data?.active, labelInFlight]);
+  useEffect(() => {
+    if (
+      intentEdit !== null &&
+      labelReady &&
+      activeLabelTask.data?.result &&
+      appliedLabelId !== activeLabelId
+    ) {
+      intentForm.setFieldsValue({
+        output_labels: activeLabelTask.data.result.labels,
+        label_task_id: activeLabelId,
+      });
+      setAppliedLabelId(activeLabelId);
+    }
+  }, [
+    intentEdit,
+    labelReady,
+    activeLabelTask.data,
+    activeLabelId,
+    appliedLabelId,
+  ]);
+  async function startLabelInference() {
+    if (!parsedExamples || parsedExamples.count < 4 || labelInFlight) return;
+    try {
+      await intentForm.validateFields(["name", "label", "description"]);
+      setLabelStarting(true);
+      const form = intentForm.getFieldsValue(true);
+      const task = await api<LabelTask>("/label-tasks", {
+        examples: parsedExamples.examples,
+        description: form.description,
+        snapshot: {
+          project_id: projectId,
+          version_id: versionId,
+          project_name: draftName,
+          intents: draft,
+          index: intentEdit,
+          form,
+        },
+      });
+      setActiveLabelId(task.id);
+      setAppliedLabelId("");
+      setLabelTaskPoll((v) => v + 1);
+      message.success(
+        "推断任务已保存，可以关闭页面，稍后从标签推断任务入口恢复",
+      );
+    } catch (error) {
+      if (error instanceof Error) message.error(error.message);
+    } finally {
+      setLabelStarting(false);
+    }
+  }
+  async function retryLabelInference(id: string) {
+    await perform(async () => {
+      await api(`/label-tasks/${id}/retry`, {});
+      setLabelTaskPoll((v) => v + 1);
+    }, "已重新提交推断任务");
+  }
+  function restoreLabelTask(id: string) {
+    switchContext(() => {
+      void perform(async () => {
+        const task = await api<LabelTask>(`/label-tasks/${id}`);
+        const saved = task.snapshot;
+        restoredDraft.current = true;
+        setInitial(false);
+        setProjectId(saved.project_id || "");
+        setVersionId(saved.version_id || "");
+        setDraftName(saved.project_name || "");
+        setDraft((saved.intents || []) as Intent[]);
+        setPage("config");
+        setDirty(true);
+        setExampleMode("json");
+        setIntentEdit(saved.index ?? 0);
+        intentForm.resetFields();
+        intentForm.setFieldsValue({
+          ...saved.form,
+          examples: JSON.stringify(task.input.examples, null, 2),
+          description: task.input.description,
+        });
+        setActiveLabelId(task.id);
+        setAppliedLabelId("");
+        setLabelTasksOpen(false);
+      }, "已恢复任务草稿，请核对后保存场景和项目配置");
+    });
+  }
   function switchContext(action: () => void) {
     if (dirty)
       modal.confirm({
         title: "有未保存的配置",
+        zIndex: 1200,
         content: "切换后会放弃本次修改。",
         okText: "放弃并切换",
         onOk: action,
@@ -400,6 +599,7 @@ function Workbench() {
   }
   function newProject() {
     switchContext(() => {
+      restoredDraft.current = false;
       setProjectId("");
       setVersionId("");
       setDraftName("");
@@ -410,25 +610,85 @@ function Workbench() {
   }
   function openIntent(index: number) {
     setIntentEdit(index);
+    setExampleMode("json");
     const item = draft[index];
+    setActiveLabelId(item?.label_task_id || "");
+    setAppliedLabelId(item?.label_task_id || "");
     intentForm.resetFields();
     intentForm.setFieldsValue(
       item
         ? {
             ...item,
+            mapping_mode: item.training_mapping ? "custom" : "auto",
             examples: item.examples
               .map((x) => (typeof x === "string" ? x : JSON.stringify(x)))
               .join("\n"),
           }
-        : { label: "", name: "", description: "", examples: "", target: 1000 },
+        : {
+            label: "",
+            name: "",
+            description: "",
+            examples: "",
+            target: 1000,
+            mapping_mode: "auto",
+          },
     );
+  }
+  function bulkReview(exportJson: boolean) {
+    modal.confirm({
+      title: exportJson ? "通过全部待审核样本并导出？" : "通过全部待审核样本？",
+      content: `将当前版本全部 ${count("pending")} 条待审核样本标记为通过，不受分页和筛选限制。已驳回和已删除样本保持原状态。请确认内容符合要求。`,
+      okText: exportJson ? "通过并导出" : "全部通过",
+      onOk: () =>
+        perform(
+          async () => {
+            const result = await api<{ id?: string }>(
+              `/versions/${versionId}/${exportJson ? "approve-export" : "approve-all"}`,
+              {},
+            );
+            setSelected([]);
+            if (exportJson && result.id) {
+              const anchor = document.createElement("a");
+              anchor.href = `/intent-api/exports/${result.id}/json`;
+              anchor.download = "train.json";
+              document.body.appendChild(anchor);
+              anchor.click();
+              anchor.remove();
+              setPage("versions");
+            }
+          },
+          exportJson
+            ? "全部待审核样本已通过，JSON 已导出"
+            : "全部待审核样本已通过",
+        ),
+    });
+  }
+  async function changeExampleMode(mode: "json" | "table") {
+    if (mode === exampleMode) return;
+    if (mode === "table") {
+      try {
+        const text = intentForm.getFieldValue("examples") || "";
+        const rows = text.trim()
+          ? (await api<ParsedExamples>("/examples/parse", { examples: text }))
+              .examples
+          : defaultExamples();
+        setTableExamples(rows);
+        setBuilderVersion((v) => v + 1);
+        intentForm.setFieldValue("examples", JSON.stringify(rows, null, 2));
+      } catch (error) {
+        message.error(`请先修正 JSON，再切换表格：${(error as Error).message}`);
+        return;
+      }
+    }
+    setExampleMode(mode);
   }
   async function saveProject() {
     await perform(async () => {
       const result = await api<{ id: string; version_id: string }>(
         "/projects",
-        { name: draftName, intents: draft, project_id: projectId || null },
+        { name: draftName, intents: draft, project_id: projectId || null, base_version_id: versionId || null },
       );
+      restoredDraft.current = false;
       setDirty(false);
       setProjectId(result.id);
       setVersionId(result.version_id);
@@ -439,16 +699,20 @@ function Workbench() {
     sampleForm.resetFields();
     const scenario = intents.find((x) => x.label === label) || intents[0];
     const reference = scenario?.examples[0];
+    const record =
+      sample === "new"
+        ? typeof reference === "object"
+          ? reference
+          : {}
+        : sample.record || {
+            instruction: sample.instruction,
+            input: sample.text,
+            output: sample.output,
+          };
     sampleForm.setFieldsValue(
       sample === "new"
-        ? {
-            label: scenario?.label,
-            text: "",
-            instruction:
-              typeof reference === "object" ? reference.instruction : "",
-            output: "",
-          }
-        : sample,
+        ? { label: scenario?.label, text: "", fields: recordFields(record) }
+        : { ...sample, fields: recordFields(record) },
     );
   }
   function review(action: string, rows?: Sample[]) {
@@ -467,15 +731,15 @@ function Workbench() {
   }
   const columns: TableColumnsType<Sample> = [
     {
-      title: "问句 / input",
+      title: "记录摘要",
       dataIndex: "text",
       render: (text, row) => (
         <div className="sample-text">
           <div>{text}</div>
-          {row.instruction && (
+          {row.record && (
             <details className="instruction-detail">
-              <summary>查看 instruction</summary>
-              <p>{row.instruction}</p>
+              <summary>查看完整 JSON</summary>
+              <pre>{JSON.stringify(row.record, null, 2)}</pre>
             </details>
           )}
           {row.conflict && <Tag color="error">答案冲突</Tag>}
@@ -483,12 +747,14 @@ function Workbench() {
       ),
     },
     {
-      title: "答案 / output",
+      title: "答案摘要",
       dataIndex: "output",
       width: 220,
       render: (value, row) =>
         value ? (
           <span className="answer-text">{value}</span>
+        ) : row.record ? (
+          <span className="muted">空字符串</span>
         ) : (
           <Tag>{row.label}（旧版）</Tag>
         ),
@@ -607,6 +873,12 @@ function Workbench() {
             <span>审核</span>
           </div>
         </div>
+        <Button type="text" onClick={() => setLabelTasksOpen(true)}>
+          标签推断任务
+          {labelTasks.data?.active
+            ? `（${labelTasks.data.active} 进行中）`
+            : ""}
+        </Button>
         <button
           className="sidebar-settings"
           onClick={() => setSettingsOpen(true)}
@@ -636,6 +908,7 @@ function Workbench() {
               }))}
               onChange={(id) =>
                 switchContext(() => {
+                  restoredDraft.current = false;
                   setVersionId("");
                   setProjectId(id);
                   setDirty(false);
@@ -680,6 +953,7 @@ function Workbench() {
                   }))}
                   onChange={(id) =>
                     switchContext(() => {
+                      restoredDraft.current = false;
                       setVersionId(id);
                       setDirty(false);
                     })
@@ -837,7 +1111,7 @@ function Workbench() {
                         </div>
                       </div>
                       <p className="intent-description">{intent.description}</p>
-                      {intent.format !== "alpaca" && (
+                      {!jsonScenario(intent) && (
                         <Tag color="warning">
                           旧版文本配置：请编辑并粘贴 JSON 样例
                         </Tag>
@@ -853,9 +1127,12 @@ function Workbench() {
                               example
                             ) : (
                               <span className="json-preview">
-                                <strong>input</strong> {example.input}
-                                <br />
-                                <strong>output</strong> {example.output}
+                                {Object.entries(example).map(([key, value]) => (
+                                  <React.Fragment key={key}>
+                                    <strong>{key}</strong> {displayValue(value)}
+                                    <br />
+                                  </React.Fragment>
+                                ))}
                               </span>
                             )}
                           </p>
@@ -919,6 +1196,11 @@ function Workbench() {
                 </div>
               )}
             </>
+          ) : page === "train" || page === "eval" ? (
+            <TrainingPanel
+              mode={page}
+              integrated={!!settings.data?.integrated}
+            />
           ) : !versionId ? (
             <Card>
               <Empty description="先创建项目并保存场景配置">
@@ -985,7 +1267,8 @@ function Workbench() {
                           样本库 <Tag>{deleted ? "回收站" : "全部数据"}</Tag>
                         </h2>
                         <p>
-                          问句、指令或答案修改后重新审核；多标签答案保存在同一条记录中。
+                          所有字段均可查看和修改，保存后重新审核；数组和嵌套对象使用
+                          JSON 编辑。
                         </p>
                       </div>
                       <Button
@@ -1106,6 +1389,24 @@ function Workbench() {
                         )}
                       </div>
                     </div>
+                    <div className="example-mode-switch">
+                      <Button
+                        disabled={busy || !count("pending")}
+                        onClick={() => bulkReview(false)}
+                      >
+                        一键通过全部待审核
+                      </Button>
+                      <Button
+                        type="primary"
+                        icon={<DownloadOutlined />}
+                        disabled={
+                          busy || !(count("pending") + count("approved"))
+                        }
+                        onClick={() => bulkReview(true)}
+                      >
+                        一键审核并导出 JSON
+                      </Button>
+                    </div>
                     <Table<Sample>
                       rowKey="id"
                       columns={columns}
@@ -1143,7 +1444,8 @@ function Workbench() {
               {page === "generate" && (
                 <>
                   {settings.data?.provider === "openai_compatible" &&
-                    !settings.data.api_key_configured && (
+                    !settings.data.api_key_configured &&
+                    settings.data.api_key_required !== false && (
                       <Alert
                         className="notice"
                         type="warning"
@@ -1419,7 +1721,8 @@ function Workbench() {
                             </h3>
                             <p>
                               {date(item.created)} ·{" "}
-                              {number(item.manifest.count)} 条样本 · Alpaca 格式
+                              {number(item.manifest.count)} 条样本 · 原始 JSON
+                              格式
                             </p>
                             <code>{item.id.slice(0, 8)}</code>
                           </div>
@@ -1436,6 +1739,22 @@ function Workbench() {
                             下载 JSON
                           </Button>
                         </div>
+                        {item.manifest.training_ready !== undefined && (
+                          <Alert
+                            type={
+                              item.manifest.training_ready
+                                ? "success"
+                                : "warning"
+                            }
+                            showIcon
+                            title={
+                              item.manifest.training_ready
+                                ? "已识别训练字段映射"
+                                : "JSON 可下载，训练映射待配置"
+                            }
+                            description={item.manifest.training_note}
+                          />
+                        )}
                         <div className="dataset-path">
                           <span>训练数据目录</span>
                           <code>{item.path}</code>
@@ -1467,6 +1786,18 @@ function Workbench() {
           </footer>
         </main>
       </div>
+      <LabelTaskDrawer
+        open={labelTasksOpen}
+        onClose={() => setLabelTasksOpen(false)}
+        data={labelTasks.data}
+        error={labelTasks.error}
+        loading={labelTasks.loading}
+        page={labelTasksPage}
+        onPage={setLabelTasksPage}
+        onOpen={restoreLabelTask}
+        onRetry={retryLabelInference}
+        onRefresh={() => setLabelTaskPoll((v) => v + 1)}
+      />
       <Drawer
         title={
           intentEdit !== null && draft[intentEdit]
@@ -1481,7 +1812,15 @@ function Workbench() {
             <Button onClick={() => setIntentEdit(null)}>取消</Button>
             <Button
               type="primary"
-              disabled={parsing || !!exampleError || !parsedExamples}
+              disabled={
+                parsing ||
+                !!exampleError ||
+                !parsedExamples ||
+                parsedExamples.count < 4 ||
+                !labelReady ||
+                appliedLabelId !== activeLabelId ||
+                labelStarting
+              }
               onClick={() => intentForm.submit()}
             >
               保存场景
@@ -1491,16 +1830,24 @@ function Workbench() {
       >
         <Form
           name="intent-config"
+          disabled={labelInFlight}
           form={intentForm}
           layout="vertical"
           onFinish={async (values) => {
             try {
+              if (!labelReady || appliedLabelId !== activeLabelId)
+                throw new Error("请先完成当前样例的标签推断");
               const result = await api<ParsedExamples>("/examples/parse", {
                 examples: values.examples,
               });
               const item: Intent = {
                 ...values,
-                format: "alpaca",
+                format: "json",
+                label_task_id: activeLabelId,
+                training_mapping:
+                  values.mapping_mode === "custom"
+                    ? values.training_mapping
+                    : null,
                 examples: result.examples,
                 output_labels: values.output_labels ?? result.output_labels,
               };
@@ -1527,7 +1874,7 @@ function Workbench() {
           <Form.Item
             name="label"
             label="场景标识"
-            extra="用于区分生成场景，例如 dam_intent；训练答案来自 JSON 的 output。"
+            extra="用于区分生成场景，例如 dam_intent；记录内容和字段以参考 JSON 为准。"
             rules={[
               {
                 required: true,
@@ -1556,34 +1903,68 @@ function Workbench() {
               placeholder="说明哪些表达属于这个场景，以及与其他类别的边界。"
             />
           </Form.Item>
-          <label className="json-file-import">
-            导入 JSON / JSONL 文件
-            <input
-              aria-label="导入 JSON 样例文件"
-              type="file"
-              accept=".json,.jsonl,application/json,text/plain"
-              onChange={async (event) => {
-                const file = event.target.files?.[0];
-                if (!file) return;
-                if (file.size > 256000) {
-                  message.error("参考样例文件不能超过 256 KB");
-                  return;
-                }
-                intentForm.setFieldValue("examples", await file.text());
-                intentForm.setFieldValue("output_labels", undefined);
-                event.target.value = "";
+          <div
+            className="example-mode-switch"
+            role="group"
+            aria-label="样例输入方式"
+          >
+            <Button
+              type={exampleMode === "table" ? "primary" : "default"}
+              onClick={() => void changeExampleMode("table")}
+            >
+              表格填写
+            </Button>
+            <Button
+              type={exampleMode === "json" ? "primary" : "default"}
+              onClick={() => void changeExampleMode("json")}
+            >
+              JSON / 文件导入
+            </Button>
+          </div>
+          {exampleMode === "table" && (
+            <ExampleBuilder
+              key={builderVersion}
+              initialExamples={tableExamples}
+              onChange={(rows) => {
+                intentForm.setFieldValue(
+                  "examples",
+                  JSON.stringify(rows, null, 2),
+                );
               }}
             />
-          </label>
+          )}
+          {exampleMode === "json" && (
+            <label className="json-file-import">
+              导入 JSON / JSONL 文件
+              <input
+                aria-label="导入 JSON 样例文件"
+                disabled={labelInFlight}
+                type="file"
+                accept=".json,.jsonl,application/json,text/plain"
+                onChange={async (event) => {
+                  const file = event.target.files?.[0];
+                  if (!file) return;
+                  if (file.size > 256000) {
+                    message.error("参考样例文件不能超过 256 KB");
+                    return;
+                  }
+                  intentForm.setFieldValue("examples", await file.text());
+                  intentForm.setFieldValue("output_labels", undefined);
+                  event.target.value = "";
+                }}
+              />
+            </label>
+          )}
           <Form.Item
+            hidden={exampleMode === "table"}
             name="examples"
             label="参考样例"
-            extra="支持每行一个 JSON 对象（JSONL）或 JSON 数组。每条必须包含 instruction、input、output。"
+            extra="支持每行一个 JSON 对象（JSONL）或 JSON 数组。字段名、值类型和嵌套结构由样例决定，同场景样例结构需一致。"
             rules={[
               {
                 required: true,
                 whitespace: true,
-                message: "请至少提供一条样例",
+                message: "请提供至少 4 条不同的样例",
               },
             ]}
           >
@@ -1606,13 +1987,22 @@ function Workbench() {
               title={exampleError}
             />
           )}
+          {parsedExamples && parsedExamples.count < 4 && (
+            <Alert
+              className="notice"
+              showIcon
+              type="warning"
+              title={`至少需要 4 条不同的参考样例，当前 ${parsedExamples.count} 条`}
+              description="最多 100 条。每批尽量选取不同的 3 条参考样例，生成最多 10 条新数据。"
+            />
+          )}
           {parsedExamples && (
             <div className="parsed-examples">
               <Alert
                 type="success"
                 showIcon
                 title={`已解析 ${parsedExamples.count} 条 JSON 样例`}
-                description="instruction 保持参考指令，扩写 input，并生成对应的 output。"
+                description="生成时校验全部字段名、值类型与嵌套结构；任务指令和系统上下文保持参考原文，其余内容按业务要求扩写。"
               />
               <details>
                 <summary>查看解析后的完整样例</summary>
@@ -1620,13 +2010,117 @@ function Workbench() {
               </details>
             </div>
           )}
+          {parsedExamples && (
+            <div className="schema-fields">
+              <strong>识别到的字段</strong>
+              {Object.entries(parsedExamples.schema.properties || {}).map(
+                ([key, field]) => (
+                  <Tag key={key}>
+                    {key}: {field.type}
+                  </Tag>
+                ),
+              )}
+            </div>
+          )}
+          <details className="training-mapping">
+            <summary>训练字段映射（自动识别或自定义）</summary>
+            <p>
+              导出 JSON 保留全部字段。这里仅指定 LlamaFactory
+              读取哪些字段；支持标准对话格式自动识别。
+            </p>
+            <Form.Item name="mapping_mode" label="映射方式">
+              <Select
+                options={[
+                  { value: "auto", label: "自动识别" },
+                  { value: "custom", label: "自定义文本字段" },
+                ]}
+              />
+            </Form.Item>
+            {mappingMode === "custom" &&
+              (["prompt", "query", "response", "system"] as const).map(
+                (key) => (
+                  <Form.Item
+                    key={key}
+                    name={["training_mapping", key]}
+                    label={
+                      {
+                        prompt: "问题 / 指令字段",
+                        query: "附加输入字段（可选）",
+                        response: "答案字段",
+                        system: "系统提示字段（可选）",
+                      }[key]
+                    }
+                  >
+                    <Select
+                      allowClear
+                      options={Object.entries(
+                        parsedExamples?.schema.properties || {},
+                      )
+                        .filter(([, v]) => v.type === "string")
+                        .map(([k]) => ({ value: k, label: k }))}
+                    />
+                  </Form.Item>
+                ),
+              )}
+          </details>
+          <div className="label-inference-status">
+            <Alert
+              className="notice"
+              showIcon
+              type={
+                labelReady
+                  ? "success"
+                  : activeLabelTask.data?.status === "failed"
+                    ? "error"
+                    : "info"
+              }
+              title={
+                labelReady
+                  ? activeLabelTask.data?.result?.classification
+                    ? "模型标签推断完成，请核对"
+                    : "模型判断为非分类任务，标签可留空"
+                  : labelInFlight
+                    ? `标签${labelTaskStatus[activeLabelTask.data?.status || "queued"]}`
+                    : "先由大模型推断答案标签"
+              }
+              description={
+                labelReady
+                  ? activeLabelTask.data?.result?.explanation
+                  : activeLabelTask.error ||
+                    activeLabelTask.data?.error ||
+                    (activeLabelTask.data && !sameLabelInput
+                      ? "样例或生成要求已变化，旧结果已失效，需要重新推断。"
+                      : "推断完成前不能编辑标签或保存场景。任务会保存草稿，关闭页面后从左侧“标签推断任务”恢复。")
+              }
+            />
+            <Button
+              onClick={startLabelInference}
+              loading={labelInFlight}
+              disabled={
+                labelInFlight ||
+                parsing ||
+                !parsedExamples ||
+                parsedExamples.count < 4
+              }
+            >
+              {activeLabelId ? "重新推断标签" : "开始推断标签"}
+            </Button>
+            <Button
+              disabled={false}
+              type="link"
+              onClick={() => setLabelTasksOpen(true)}
+            >
+              查看标签推断任务
+            </Button>
+          </div>
           <Form.Item
             name="output_labels"
             label="答案标签约束（可选）"
-            extra="从指令中的明确标签列表识别，请核对。多标签答案用顿号分隔；非分类任务可清空。"
+            extra="由大模型推断，完成后可输入新标签并按 Enter 添加，也可删除或清空；修改样例或生成要求后需重新推断。"
           >
             <Select
               mode="tags"
+              disabled={!labelReady || labelInFlight}
               tokenSeparators={["、", ",", "，"]}
               placeholder="例如：数值查询、变化分析、未来预测"
             />
@@ -1647,7 +2141,7 @@ function Workbench() {
       </Drawer>
       <Drawer
         title={sampleEdit === "new" ? "人工添加样本" : "编辑样本"}
-        size={520}
+        size={760}
         open={sampleEdit !== null}
         onClose={() => setSampleEdit(null)}
         footer={
@@ -1668,7 +2162,7 @@ function Workbench() {
           type="info"
           showIcon
           title="保存后需要重新审核"
-          description="原始指令、问句、答案与修改记录都会保留，已冻结的数据版本不受影响。"
+          description="原始完整 JSON 与所有字段的修改记录都会保留，已冻结的数据版本不受影响。"
         />
         <Form
           name="sample-editor"
@@ -1676,11 +2170,29 @@ function Workbench() {
           layout="vertical"
           onFinish={(values) =>
             perform(async () => {
+              const payload: {
+                label: string;
+                text?: string;
+                record?: TrainingRecord;
+              } = { label: values.label };
+              if (jsonScenario(sampleScenario)) {
+                const record: TrainingRecord = {};
+                for (const [key, template] of Object.entries(sampleTemplate)) {
+                  const value = values.fields?.[key];
+                  record[key] =
+                    template === null
+                      ? null
+                      : typeof template === "object"
+                        ? JSON.parse(value)
+                        : value;
+                }
+                payload.record = record;
+              } else payload.text = values.text;
               if (sampleEdit === "new")
-                await api(`/versions/${versionId}/samples`, values);
+                await api(`/versions/${versionId}/samples`, payload);
               else if (sampleEdit)
                 await api(`/versions/${versionId}/review`, {
-                  ...values,
+                  ...payload,
                   action: "edit",
                   selected: [
                     { id: sampleEdit.id, revision: sampleEdit.revision },
@@ -1691,77 +2203,108 @@ function Workbench() {
           }
         >
           <Form.Item name="label" label="所属场景" rules={[{ required: true }]}>
-            <Select options={labelOptions} />
+            <Select
+              options={labelOptions}
+              onChange={(value) => {
+                const example = intents.find((x) => x.label === value)
+                  ?.examples[0];
+                if (typeof example === "object")
+                  sampleForm.setFieldValue("fields", recordFields(example));
+              }}
+            />
           </Form.Item>
-          {sampleScenario?.format === "alpaca" && (
+          {jsonScenario(sampleScenario) ? (
+            Object.entries(sampleTemplate).map(([key, template]) => {
+              if (template === null)
+                return (
+                  <div className="null-field" key={key}>
+                    <label>{key}</label> <Tag>null</Tag>
+                  </div>
+                );
+              const nested = typeof template === "object";
+              return (
+                <Form.Item
+                  key={`${sampleLabel}:${key}`}
+                  name={["fields", key]}
+                  label={fieldLabel(key)}
+                  valuePropName={
+                    typeof template === "boolean" ? "checked" : "value"
+                  }
+                  rules={
+                    nested
+                      ? [
+                          {
+                            validator: async (_, value) => {
+                              try {
+                                JSON.parse(value);
+                              } catch {
+                                throw new Error("请输入有效 JSON");
+                              }
+                            },
+                          },
+                        ]
+                      : []
+                  }
+                  getValueProps={
+                    key === answerField && sampleScenario?.output_labels?.length
+                      ? (value: string) => ({
+                          value: value ? value.split("、") : [],
+                        })
+                      : undefined
+                  }
+                  normalize={
+                    key === answerField && sampleScenario?.output_labels?.length
+                      ? (value: string[]) => value.join("、")
+                      : undefined
+                  }
+                >
+                  {typeof template === "boolean" ? (
+                    <Switch />
+                  ) : typeof template === "number" ? (
+                    <InputNumber style={{ width: "100%" }} />
+                  ) : key === answerField &&
+                    sampleScenario?.output_labels?.length ? (
+                    <Select
+                      mode="multiple"
+                      options={sampleScenario.output_labels.map((x) => ({
+                        value: x,
+                        label: x,
+                      }))}
+                    />
+                  ) : (
+                    <Input.TextArea
+                      rows={
+                        nested
+                          ? 9
+                          : ["system", "instruction", "system_prompt"].includes(
+                                key,
+                              )
+                            ? 4
+                            : 3
+                      }
+                      className={nested ? "json-editor" : undefined}
+                      maxLength={nested ? 64000 : 16000}
+                    />
+                  )}
+                </Form.Item>
+              );
+            })
+          ) : (
             <Form.Item
-              name="instruction"
-              label="任务指令 / instruction"
-              rules={[
-                { required: true, whitespace: true, message: "请输入任务指令" },
-              ]}
+              name="text"
+              label="样本文本"
+              rules={[{ required: true }]}
             >
-              <Input.TextArea rows={4} maxLength={12000} />
+              <Input.TextArea rows={5} />
             </Form.Item>
           )}
-          <Form.Item
-            name="text"
-            label="问句 / input"
-            rules={[
-              { required: true, whitespace: true, message: "请输入样本文本" },
-            ]}
-          >
-            <Input.TextArea rows={5} maxLength={4000} showCount />
-          </Form.Item>
-          {sampleScenario?.format === "alpaca" &&
-            (sampleScenario.output_labels?.length ? (
-              <Form.Item
-                name="output"
-                label="答案标签 / output"
-                rules={[{ required: true, message: "请选择至少一个答案标签" }]}
-                getValueProps={(value: string) => ({
-                  value: value ? value.split("、") : [],
-                })}
-                normalize={(value: string[]) => value.join("、")}
-              >
-                <Select
-                  mode="multiple"
-                  options={sampleScenario.output_labels.map((x) => ({
-                    value: x,
-                    label: x,
-                  }))}
-                />
-              </Form.Item>
-            ) : (
-              <Form.Item
-                name="output"
-                label="答案 / output"
-                rules={[
-                  {
-                    required: true,
-                    whitespace: true,
-                    message: "请输入正确答案",
-                  },
-                ]}
-              >
-                <Input.TextArea rows={3} maxLength={4000} />
-              </Form.Item>
-            ))}
         </Form>
         {sampleEdit && sampleEdit !== "new" && (
           <div className="original-sample">
-            <label>原始文本 · {sources[sampleEdit.source]}</label>
+            <label>原始完整记录 · {sources[sampleEdit.source]}</label>
             <pre>
-              {sampleEdit.original_instruction
-                ? JSON.stringify(
-                    {
-                      instruction: sampleEdit.original_instruction,
-                      input: sampleEdit.original,
-                      output: sampleEdit.original_output,
-                    },
-                    null,
-                    2,
-                  )
+              {sampleEdit.original_record
+                ? JSON.stringify(sampleEdit.original_record, null, 2)
                 : sampleEdit.original}
             </pre>
           </div>
@@ -1816,7 +2359,9 @@ function Workbench() {
         <dl className="settings-list">
           <dt>服务地址</dt>
           <dd>{settings.data?.base_url}</dd>
-          <dt>配置文件</dt>
+          <dt>配置来源</dt>
+          <dd>系统环境变量 → 项目 .env → JSON 配置文件</dd>
+          <dt>备用配置文件</dt>
           <dd>
             <code>{settings.data?.config_path}</code>
           </dd>
@@ -1824,18 +2369,57 @@ function Workbench() {
           <dd>
             {settings.data?.api_key_configured
               ? "已配置（尚未验证接口连通性）"
-              : "未配置"}
+              : settings.data?.api_key_required === false
+                ? "未配置（本机或局域网服务可不填）"
+                : "未配置"}
           </dd>
           <dt>密钥环境变量</dt>
           <dd>
             <code>{settings.data?.api_key_env}</code>
           </dd>
         </dl>
+        <Button
+          loading={busy}
+          disabled={settings.data?.provider === "local"}
+          onClick={() =>
+            perform(async () => {
+              setDiscoveredModels([]);
+              const result = await api<{ models: string[] }>(
+                "/settings/discover",
+                {},
+              );
+              setDiscoveredModels(result.models);
+            }, "服务模型已检测")
+          }
+        >
+          检测服务模型
+        </Button>
+        {discoveredModels.length > 0 && (
+          <Alert
+            className="notice"
+            type="success"
+            showIcon
+            title={
+              discoveredModels.length === 1
+                ? "已识别模型，auto 将使用这个名称"
+                : "服务有多个模型，请将其中一个完整名称填写到 WY_INTENT_MODEL"
+            }
+            description={
+              <div>
+                {discoveredModels.map((name) => (
+                  <div key={name}>
+                    <code>{name}</code>
+                  </div>
+                ))}
+              </div>
+            }
+          />
+        )}
         <Alert
           type="info"
           showIcon
-          title="换机器时直接替换配置"
-          description="在配置文件中设置服务地址和模型，密钥放在环境变量或 .env。新建任务时读取新配置，进行中的任务保留原配置。"
+          title="可在 .env 中配置生成模型"
+          description="设置 WY_INTENT_BASE_URL、WY_INTENT_MODEL 和 WY_INTENT_API_KEY。模型名留空或填 auto 时，启动生成前检测服务：只有一个模型则自动使用，多个模型需填写完整名称。新建任务读取新配置。"
         />
       </Drawer>
     </div>
