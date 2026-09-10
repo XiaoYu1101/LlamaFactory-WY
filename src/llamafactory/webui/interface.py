@@ -122,7 +122,7 @@ def run_web_ui() -> None:
     from ..intent.service import get_service
 
     demo = create_ui().queue()
-    demo.launch(share=gradio_share, server_name=server_name, inbrowser=True, prevent_thread_lock=True)
+    demo.launch(share=gradio_share, server_name=server_name, inbrowser=False, prevent_thread_lock=True)
     install_routes(demo.app, get_service(), demo.intent_engine)
     demo.block_thread()
 
