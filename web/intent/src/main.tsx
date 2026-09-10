@@ -47,6 +47,7 @@ import {
 import type { TableColumnsType } from "antd";
 import "./style.css";
 import TrainingPanel from "./TrainingPanel";
+import { useWorkspaceRoute } from "./useWorkspaceRoute";
 import LabelTaskDrawer, {
   labelTaskStatus,
   stableJSON,
@@ -274,9 +275,8 @@ function useData<T>(path: string | null, tick = 0) {
 
 function Workbench() {
   const { message, modal } = App.useApp();
-  const [page, setPage] = useState<Page>("config");
-  const [projectId, setProjectId] = useState("");
-  const [versionId, setVersionId] = useState("");
+  const { page, setPage, projectId, setProjectId, versionId, setVersionId } =
+    useWorkspaceRoute();
   const [tick, setTick] = useState(0);
   const [poll, setPoll] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -405,17 +405,16 @@ function Workbench() {
 
   useEffect(() => {
     if (projects.data && initial) {
-      if (projects.data.length) setProjectId(projects.data[0].id);
-      else setPage("config");
+      if (!projectId && projects.data.length) setProjectId(projects.data[0].id);
       setInitial(false);
     }
   }, [projects.data, initial]);
   useEffect(() => {
     if (project.data && !restoredDraft.current) {
-      setVersionId(project.data.current_version);
+      if (!versionId) setVersionId(project.data.current_version);
       setDraftName(project.data.name);
     }
-  }, [project.data?.id, project.data?.current_version]);
+  }, [project.data?.id, project.data?.current_version, versionId]);
   useEffect(() => {
     if (version.data && !restoredDraft.current) {
       setDraft(version.data.config);
@@ -634,6 +633,47 @@ function Workbench() {
           },
     );
   }
+  async function removeScenario(index: number) {
+    const scenario = draft[index];
+    const persisted = version.data?.config.some(
+      (item) => item.label === scenario.label,
+    );
+    if (!persisted) {
+      setDraft(draft.filter((_, i) => i !== index));
+      setDirty(true);
+      return;
+    }
+    if (dirty) {
+      message.error("请先保存其他配置修改，再删除已保存的场景。");
+      return;
+    }
+    await perform(async () => {
+      const result = await api<{ version_id: string; config: Intent[] }>(
+        `/versions/${versionId}/delete-scenario`,
+        { label: scenario.label },
+      );
+      restoredDraft.current = false;
+      setVersionId(result.version_id);
+      setDraft(result.config);
+      setDirty(false);
+      setSelected([]);
+    }, "场景及关联样本已删除并保存");
+  }
+  function clearAllSamples() {
+    modal.confirm({
+      title: "清空当前版本的全部审核样本？",
+      content:
+        "永久删除所有分页的待审核、通过、驳回及回收站样本，不受当前筛选影响；场景参考样例保留。暂停的生成任务将取消。已导出的固定数据包不受影响。此操作不可恢复。",
+      okText: "确认清空",
+      okButtonProps: { danger: true },
+      onOk: () =>
+        perform(async () => {
+          await api(`/versions/${versionId}/clear-samples`, {});
+          setSelected([]);
+          setTablePage(1);
+        }, "当前版本样本已全部清空"),
+    });
+  }
   function bulkReview(exportJson: boolean) {
     modal.confirm({
       title: exportJson ? "通过全部待审核样本并导出？" : "通过全部待审核样本？",
@@ -686,7 +726,12 @@ function Workbench() {
     await perform(async () => {
       const result = await api<{ id: string; version_id: string }>(
         "/projects",
-        { name: draftName, intents: draft, project_id: projectId || null, base_version_id: versionId || null },
+        {
+          name: draftName,
+          intents: draft,
+          project_id: projectId || null,
+          base_version_id: versionId || null,
+        },
       );
       restoredDraft.current = false;
       setDirty(false);
@@ -1095,11 +1140,10 @@ function Workbench() {
                             onClick={() => openIntent(index)}
                           />
                           <Popconfirm
-                            title="从配置中移除此场景？"
-                            onConfirm={() => {
-                              setDraft(draft.filter((_, i) => i !== index));
-                              setDirty(true);
-                            }}
+                            title="删除场景及关联样本？"
+                            okText="确认删除"
+                            description="立即保存删除，清理本项目各版本中该场景的样本；取消暂停任务。已导出的固定数据包保留。不可恢复。"
+                            onConfirm={() => removeScenario(index)}
                           >
                             <Button
                               type="text"
@@ -1395,6 +1439,13 @@ function Workbench() {
                         onClick={() => bulkReview(false)}
                       >
                         一键通过全部待审核
+                      </Button>
+                      <Button
+                        danger
+                        disabled={running || busy}
+                        onClick={clearAllSamples}
+                      >
+                        一键清空样本
                       </Button>
                       <Button
                         type="primary"

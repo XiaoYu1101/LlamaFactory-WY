@@ -80,6 +80,8 @@ class IntentService:
 
     def start(self, version_id, chatter=None, label=None, amount=None):
         config = self.store.version(version_id)["config"]
+        if not config:
+            raise IntentError("请先添加并保存场景，再开始生成。")
         from .records import is_json_scenario
 
         for scenario in config:

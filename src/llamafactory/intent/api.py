@@ -68,6 +68,10 @@ class ReviewInput(Payload):
     label: str | None = None
 
 
+class ScenarioDelete(Payload):
+    label: str = Field(min_length=1, max_length=100)
+
+
 class ExamplesInput(Payload):
     examples: str = Field(max_length=256000)
 
@@ -251,6 +255,14 @@ def create_api(service, engine=None):
     @app.post("/versions/{version_id}/samples")
     def add_sample(version_id: str, body: SampleInput):
         return {"id": store.add_sample(version_id, body.label, body.text, body.instruction, body.output, body.record)}
+
+    @app.post("/versions/{version_id}/clear-samples")
+    def clear_samples(version_id: str):
+        return store.clear_samples(version_id)
+
+    @app.post("/versions/{version_id}/delete-scenario")
+    def delete_scenario(version_id: str, body: ScenarioDelete):
+        return store.delete_scenario(version_id, body.label)
 
     @app.post("/versions/{version_id}/review")
     def review(version_id: str, body: ReviewInput):

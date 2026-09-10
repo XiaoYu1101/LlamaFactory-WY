@@ -193,6 +193,81 @@ class Store:
         return {"id": project_id, "version_id": version_id}
 
     @staticmethod
+    def _guard_purge(db, version_ids):
+        for version_id in version_ids:
+            if db.execute(
+                "SELECT 1 FROM jobs WHERE version_id=? AND status IN ('queued','running','pausing','cancelling')",
+                (version_id,),
+            ).fetchone():
+                raise IntentError("请先暂停或停止生成，再删除场景或清空样本。")
+        for version_id in version_ids:
+            db.execute(
+                "UPDATE jobs SET status='cancelled' WHERE version_id=? AND status IN ('paused','interrupted','failed')",
+                (version_id,),
+            )
+
+    @staticmethod
+    def _purge_samples(db, version_id, label=None):
+        where, params = "version_id=?", [version_id]
+        if label is not None:
+            where += " AND label=?"
+            params.append(label)
+        db.execute(f"DELETE FROM review_events WHERE sample_id IN (SELECT id FROM samples WHERE {where})", params)
+        return db.execute(f"DELETE FROM samples WHERE {where}", params).rowcount
+
+    def clear_samples(self, version_id):
+        with self.connect(True) as db:
+            self.require(db, "versions", version_id)
+            self._guard_purge(db, [version_id])
+            count = self._purge_samples(db, version_id)
+        return {"deleted": count}
+
+    def delete_scenario(self, version_id, label):
+        with self.connect(True) as db:
+            current = self.require(db, "versions", version_id)
+            project = self.require(db, "projects", current["project_id"])
+            if project["current_version"] != version_id:
+                raise IntentError("只能从最新项目配置删除场景，请刷新后重试。")
+            config = json.loads(current["config"])
+            if label not in {item["label"] for item in config}:
+                raise IntentError("场景不存在，请刷新后重试。")
+            versions = db.execute("SELECT * FROM versions WHERE project_id=?", (project["id"],)).fetchall()
+            affected = [row for row in versions if label in {item["label"] for item in json.loads(row["config"])}]
+            self._guard_purge(db, [row["id"] for row in affected])
+            count = 0
+            for row in affected:
+                remaining = [item for item in json.loads(row["config"]) if item["label"] != label]
+                db.execute("UPDATE versions SET config=? WHERE id=?", (dump(remaining), row["id"]))
+                count += self._purge_samples(db, row["id"], label)
+            # A new current version prevents stale browser drafts from resurrecting the removed scene.
+            new_id = uid()
+            remaining = [item for item in config if item["label"] != label]
+            db.execute("INSERT INTO versions VALUES (?,?,?,?)", (new_id, project["id"], dump(remaining), now()))
+            db.execute("UPDATE projects SET current_version=? WHERE id=?", (new_id, project["id"]))
+            rows = db.execute("SELECT * FROM samples WHERE version_id=?", (version_id,)).fetchall()
+            for row in rows:
+                item = dict(row)
+                item.update(id=uid(), version_id=new_id)
+                columns = list(item)
+                db.execute(
+                    f"INSERT INTO samples ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+                    list(item.values()),
+                )
+                for event in db.execute("SELECT * FROM review_events WHERE sample_id=?", (row["id"],)).fetchall():
+                    db.execute(
+                        "INSERT INTO review_events VALUES (?,?,?,?,?,?)",
+                        (
+                            uid(),
+                            item["id"],
+                            event["action"],
+                            event["before_json"],
+                            event["after_json"],
+                            event["created"],
+                        ),
+                    )
+        return {"version_id": new_id, "config": remaining, "deleted": count}
+
+    @staticmethod
     def _insert_sample(db, version_id, label, text, source, job_id=None, batch_id=None, seed_ids=None):
         record = validate_record(text) if isinstance(text, dict) else None
         instruction, text, output = record_projection(record) if record else ("", text, "")

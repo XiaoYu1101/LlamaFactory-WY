@@ -33,6 +33,8 @@ def freeze_dataset(store, version_id: str, approve_pending=False) -> dict:
         approved_now = store.approve_pending(db, version_id) if approve_pending else 0
         version = store.require(db, "versions", version_id)
         intents = json.loads(version["config"])
+        if not intents:
+            raise IntentError("没有场景可导出，请先添加场景并生成审核数据。")
         if db.execute(
             "SELECT 1 FROM samples WHERE version_id=? AND deleted=0 AND status='pending' LIMIT 1", (version_id,)
         ).fetchone():
