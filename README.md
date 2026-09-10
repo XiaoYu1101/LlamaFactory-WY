@@ -41,3 +41,5 @@ python scripts/intent_workbench.py
 项目基于 LlamaFactory 源码二次开发，导入版本为 `673048c6a543cbbeaed5b8444b8223dc4e23c721`，保留上游版权声明及 [Apache-2.0 许可证](LICENSE)。上游安装及训练说明见 [原始 README](README.upstream.md) 和 [中文 README](README_zh.md)。
 
 LoRA 配置：左侧“模型训练”提供常用参数、配置保存/恢复和训练迁移包下载。完整模式可将保存的配置填入原生 Train；迁移包通过原生 CLI 运行。详见 [LoRA 参数与迁移训练](docs/WY_USAGE.md#lora-参数与迁移训练)。
+
+Linux 服务器部署与迁移配置见 [服务器部署指南](docs/WY_SERVER_DEPLOY.md)。
