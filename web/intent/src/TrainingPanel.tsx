@@ -113,7 +113,7 @@ export default function TrainingPanel({
       );
       setSaved(result);
       await refresh();
-      message.success("训练配置已保存，可以下载迁移包或填入原生训练页");
+      message.success("训练配置已保存，可下载 LoRA 训练包或应用到原生训练页");
     } catch (e) {
       message.error((e as Error).message);
     } finally {
@@ -126,9 +126,9 @@ export default function TrainingPanel({
     ["lora_dropout", "LoRA Dropout", 0, 0.99],
     ["learning_rate", "学习率", 0.000000001, 1],
     ["num_train_epochs", "训练轮数", 0.01, 1000],
-    ["per_device_train_batch_size", "每设备批大小", 1, 1024],
+    ["per_device_train_batch_size", "每设备批次样本数", 1, 1024],
     ["gradient_accumulation_steps", "梯度累积步数", 1, 4096],
-    ["cutoff_len", "最大序列长度", 32, 131072],
+    ["cutoff_len", "最大序列长度（Token）", 32, 131072],
     ["val_size", "验证集比例（0 为不划分）", 0, 0.49],
   ] as const;
   return (
@@ -139,13 +139,13 @@ export default function TrainingPanel({
         <>
           <p>
             选择已审核并导出的数据，填写训练机器上的基座模型路径或模型仓库
-            ID。这里配置的是本地训练模型，与扩写数据使用的 API 服务分别设置。
+            ID。训练模型与样本生成服务独立配置。
           </p>
           {error && <Alert type="error" title={error} />}
           <Space wrap style={{ marginBottom: 16 }}>
             <Button onClick={refresh}>刷新数据与配置</Button>
             <Select
-              placeholder="恢复已保存的训练配置"
+              placeholder="加载已保存的训练配置"
               style={{ width: 380 }}
               value={saved?.id}
               options={plans.map((p) => ({
@@ -174,10 +174,10 @@ export default function TrainingPanel({
             <Form.Item
               name="export_id"
               label="训练数据版本"
-              rules={[{ required: true, message: "请选择已导出的数据" }]}
+              rules={[{ required: true, message: "请选择训练数据集版本" }]}
             >
               <Select
-                placeholder="先在数据版本页完成审核并导出"
+                placeholder="请选择已创建的固定数据集版本"
                 options={options.exports.map((e) => ({
                   value: e.id,
                   disabled: !e.manifest.training_ready,
@@ -189,7 +189,7 @@ export default function TrainingPanel({
               <Col xs={24} md={12}>
                 <Form.Item
                   name="model_name_or_path"
-                  label="基座模型路径或 ID"
+                  label="基座模型路径或仓库 ID"
                   rules={[{ required: true, whitespace: true }]}
                 >
                   <Input placeholder="例如 /models/Qwen3-4B 或模型仓库 ID" />
@@ -243,7 +243,7 @@ export default function TrainingPanel({
                     options={[
                       {
                         value: "auto",
-                        label: "自动：按训练机器 CUDA 能力选择",
+                        label: "自动选择（按训练设备的 CUDA 能力）",
                       },
                       ...["bf16", "fp16", "fp32"].map((value) => ({
                         value,
@@ -256,8 +256,8 @@ export default function TrainingPanel({
             </Row>
             <p>
               固定使用 SFT + LoRA；不启用量化。其他参数由 LlamaFactory
-              默认值和基础运行配置提供。验证集用于观察 loss，分类准确率和 F1
-              需独立评测。
+              默认值和基础运行配置提供。验证集用于计算验证损失（loss），分类准确率和
+              F1 需独立评测。
             </p>
             <Button type="primary" htmlType="submit" loading={busy}>
               保存训练配置
@@ -295,8 +295,8 @@ export default function TrainingPanel({
       ) : (
         <Alert
           type="info"
-          title="使用独立测试数据"
-          description="完整界面“意图分类”页下方可选择独立评测数据版本，点击“将数据填入评测页”，自动填入目录和数据集。顶部选择基座模型与 LoRA 适配器，再在原生评测页开始。多标签准确率、Micro/Macro-F1 需要相应任务评测脚本；验证 loss 不代表分类质量。"
+          title="独立评测数据与指标说明"
+          description="完整界面“意图分类”页下方可选择独立评测数据版本，点击“将数据填入评测页”，自动填入目录和数据集。顶部选择基座模型与 LoRA 适配器，再在原生评测页开始。多标签准确率、Micro/Macro-F1 需要相应任务评测脚本；验证损失不能直接替代分类准确率或 F1。"
         />
       )}
       <div style={{ marginTop: 24 }}>
@@ -306,15 +306,15 @@ export default function TrainingPanel({
               {training ? "打开原生训练页" : "打开原生评测页"}
             </Button>
             <p>
-              完整界面“意图分类”页下方可刷新并选择已保存的 LoRA
-              配置，填入原生训练页；核对模型后点击原生开始按钮，进度、日志和损失曲线沿用
-              LlamaFactory。
+              {training
+                ? "在完整界面“意图分类”页下方选择已保存的 LoRA 配置，并应用到原生训练页。核对模型、数据和参数后启动训练；进度、日志及损失曲线由 LlamaFactory 提供。"
+                : "在完整界面“意图分类”页下方选择独立评测数据并应用到原生评测页。核对基座模型与适配器后启动评测或预测，进度及结果由 LlamaFactory 提供。"}
             </p>
           </>
         ) : (
           <Alert
             type="info"
-            title="当前为轻量模式，可保存配置和下载训练包"
+            title="轻量模式：支持训练配置管理与训练包导出"
             description={
               <>
                 <p>也可在训练机器启动完整界面，使用原生训练、评测和监控：</p>
@@ -322,7 +322,7 @@ export default function TrainingPanel({
                   python -m pip install -e .{"\n"}python
                   scripts/intent_workbench.py --full
                 </pre>
-                <p>同一工作区请先关闭轻量服务再切换完整模式。</p>
+                <p>切换为完整模式前，请停止使用同一数据目录的轻量服务。</p>
               </>
             }
           />

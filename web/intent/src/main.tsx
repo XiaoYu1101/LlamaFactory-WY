@@ -202,23 +202,26 @@ const nav = [
   { key: "eval", icon: <CheckCircleOutlined />, label: "模型评测" },
 ];
 const copy: Record<Page, [string, string]> = {
-  train: ["训练基座模型", "使用 LlamaFactory 原生微调流程与训练监控。"],
-  eval: ["评测与预测", "使用 LlamaFactory 原生评测流程检查模型效果。"],
+  train: [
+    "模型微调配置",
+    "配置模型微调任务，并通过 LlamaFactory 查看训练状态与结果。",
+  ],
+  eval: ["评测与预测", "配置独立评测数据，使用 LlamaFactory 执行评测或预测。"],
   config: [
-    "用 JSON 样例扩展训练集",
-    "填写样例表格或导入 JSON，按样例的全部字段、类型与嵌套结构扩写、审核和导出。",
+    "生成场景配置",
+    "通过表格或 JSON 文件配置参考样例，按样例字段、值类型及嵌套结构生成数据。",
   ],
   generate: [
-    "让样例变成数据集",
-    "按照参考样例的任务与数据结构扩写，生成结果通过字段和类型校验后入库。",
+    "样本生成任务",
+    "根据场景要求与参考样例生成数据；结构校验通过的新增样本进入待审核列表。",
   ],
   review: [
-    "把好每一条数据的质量",
-    "查看、修订和审核样本，让训练数据准确表达你的业务意图。",
+    "样本审核与维护",
+    "查看并修订生成内容，审核样本的任务相关性、标注准确性与数据完整性。",
   ],
   versions: [
-    "准备好下一次微调",
-    "将审核通过的数据保存为固定版本，交给 LlamaFactory 训练。",
+    "数据集版本与导出",
+    "将审核通过的样本保存为固定数据集版本，导出数据及 LlamaFactory 字段映射配置。",
   ],
 };
 
@@ -569,7 +572,7 @@ function Workbench() {
         setActiveLabelId(task.id);
         setAppliedLabelId("");
         setLabelTasksOpen(false);
-      }, "已恢复任务草稿，请核对后保存场景和项目配置");
+      }, "任务草稿已恢复，请核对场景内容并保存项目配置");
     });
   }
   function switchContext(action: () => void) {
@@ -866,7 +869,7 @@ function Workbench() {
               />
             </Tooltip>
             <Popconfirm
-              title="删除这条样本？"
+              title="将该样本移至回收站？"
               description="删除后可在回收站恢复。"
               onConfirm={() => review("delete", [row])}
             >
@@ -904,11 +907,11 @@ function Workbench() {
           <div className="guide-icon">
             <ApartmentOutlined />
           </div>
-          <strong>从意图到训练数据</strong>
+          <strong>训练数据准备流程</strong>
           <p>
-            配置场景，扩展样本，
+            场景配置、样本生成、
             <br />
-            让每一次微调有据可依。
+            数据审核与版本管理。
           </p>
           <div className="guide-steps">
             <span>配置</span>
@@ -931,14 +934,14 @@ function Workbench() {
           <SettingOutlined /> 生成服务配置
         </button>
         <div className="sidebar-foot">
-          <span className="online-dot" /> 本地工作区 <span>v1.0</span>
+          <span className="online-dot" /> 服务端工作区 <span>v1.0</span>
         </div>
       </aside>
       <div className="main-shell">
         <header className="topbar">
           <div className="workspace-label">
             <FolderOpenOutlined />
-            <span>我的工作区</span>
+            <span>项目工作区</span>
             <b>/</b>
             <Select
               aria-label="切换项目"
@@ -964,7 +967,7 @@ function Workbench() {
           <div className="topbar-actions">
             <span className="model-indicator">
               <CloudServerOutlined />
-              {settings.data?.model || "读取配置中"}
+              {settings.data?.model || "正在加载配置"}
             </span>
             <Button
               icon={<PlusOutlined />}
@@ -1109,7 +1112,7 @@ function Workbench() {
               </div>
               {!draft.length ? (
                 <Card>
-                  <Empty description="从第一个生成场景开始">
+                  <Empty description="尚未配置生成场景">
                     <Button
                       type="primary"
                       icon={<PlusOutlined />}
@@ -1142,7 +1145,7 @@ function Workbench() {
                           <Popconfirm
                             title="删除场景及关联样本？"
                             okText="确认删除"
-                            description="立即保存删除，清理本项目各版本中该场景的样本；取消暂停任务。已导出的固定数据包保留。不可恢复。"
+                            description="删除将立即生效，并永久清理本项目各配置版本中该场景的样本；相关暂停任务将取消。已导出的固定数据包保留，此操作不可恢复。"
                             onConfirm={() => removeScenario(index)}
                           >
                             <Button
@@ -1224,7 +1227,7 @@ function Workbench() {
                       setDirty(true);
                     }}
                   >
-                    均分到各场景
+                    按场景平均分配
                   </Button>
                   <span className="muted">保存后生效</span>
                 </div>
@@ -1247,7 +1250,7 @@ function Workbench() {
             />
           ) : !versionId ? (
             <Card>
-              <Empty description="先创建项目并保存场景配置">
+              <Empty description="先创建项目并应用场景配置配置">
                 <Button type="primary" onClick={() => setPage("config")}>
                   配置生成场景
                 </Button>
@@ -1266,25 +1269,25 @@ function Workbench() {
                       [
                         "样本总量",
                         count(),
-                        "生成和人工添加的数据；JSON 参考样例另计",
+                        "当前版本中未删除的样本；不包含 JSON 参考样例",
                         <DatabaseOutlined />,
                       ],
                       [
                         "待审核",
                         count("pending"),
-                        "等待人工确认",
+                        "尚未完成审核的样本",
                         <FileDoneOutlined />,
                       ],
                       [
                         "已通过",
                         count("approved"),
-                        "可用于训练的优质样本",
+                        "已通过人工审核的样本",
                         <CheckCircleOutlined />,
                       ],
                       [
                         "答案冲突",
                         version.data.counts.conflicts,
-                        "相同指令和问句对应不同答案",
+                        "相同任务指令和输入对应不同输出",
                         <ApartmentOutlined />,
                       ],
                     ].map(([title, value, desc, icon], index) => (
@@ -1438,14 +1441,14 @@ function Workbench() {
                         disabled={busy || !count("pending")}
                         onClick={() => bulkReview(false)}
                       >
-                        一键通过全部待审核
+                        通过全部待审核样本
                       </Button>
                       <Button
                         danger
                         disabled={running || busy}
                         onClick={clearAllSamples}
                       >
-                        一键清空样本
+                        清空当前版本样本
                       </Button>
                       <Button
                         type="primary"
@@ -1455,7 +1458,7 @@ function Workbench() {
                         }
                         onClick={() => bulkReview(true)}
                       >
-                        一键审核并导出 JSON
+                        全部通过并导出 JSON
                       </Button>
                     </div>
                     <Table<Sample>
@@ -1484,7 +1487,8 @@ function Workbench() {
                   </Card>
                   <div className="next-step">
                     <span>
-                      <FileDoneOutlined /> 处理完全部待审核样本后，保存数据版本
+                      <FileDoneOutlined />{" "}
+                      处理完全部待审核样本后，创建数据集版本
                     </span>
                     <Button type="link" onClick={() => setPage("versions")}>
                       前往数据版本 <ArrowRightOutlined />
@@ -1508,10 +1512,10 @@ function Workbench() {
                   <Card className="generation-hero">
                     <div>
                       <Tag color="blue">按场景配置生成</Tag>
-                      <h2>少量样例，更多业务表达。</h2>
+                      <h2>按参考样例生成数据</h2>
                       <p>
                         根据已保存的 JSON
-                        样例生成完整训练记录。只计算有效新增记录；重复和无效结果会过滤，参考样例不混入训练集。
+                        样例生成完整训练记录。仅统计结构校验通过的新增样本；重复或校验失败的结果会被过滤，内容仍需人工审核。
                       </p>
                       <div className="hero-actions">
                         <Button
@@ -1540,7 +1544,7 @@ function Workbench() {
                             setExtraOpen(true);
                           }}
                         >
-                          按场景补生成
+                          按场景追加生成
                         </Button>
                       </div>
                       {dirty && (
@@ -1569,13 +1573,15 @@ function Workbench() {
                   <div className="section-heading">
                     <div>
                       <h2>生成任务</h2>
-                      <p>可暂停和继续。关闭页面后，服务中的任务仍会继续。</p>
+                      <p>
+                        支持暂停与恢复。关闭浏览器页面不会停止服务端生成任务。
+                      </p>
                     </div>
                     <Tag>{version.data.jobs.length} 个任务</Tag>
                   </div>
                   {!version.data.jobs.length ? (
                     <Card>
-                      <Empty description="暂无生成任务，准备好后开始第一次生成" />
+                      <Empty description="暂无生成任务，请应用场景配置配置后创建任务" />
                     </Card>
                   ) : (
                     version.data.jobs.map((job) => {
@@ -1705,11 +1711,11 @@ function Workbench() {
                       <DatabaseOutlined />
                     </div>
                     <div>
-                      <h2>保存一份确定的训练数据</h2>
+                      <h2>创建固定数据集版本</h2>
                       <p>
-                        仅纳入已通过的训练记录，保留
-                        instruction、input、output。参考 JSON
-                        不自动加入；删除或驳回后，可补生成到目标数量。
+                        仅纳入审核通过且未删除的样本，保留参考样例定义的全部字段、值类型及嵌套结构。
+                        JSON 参考样例不自动纳入训练集；导出记录统一保存为 JSON
+                        数组。
                       </p>
                       <div className="export-checks">
                         <Tag color={count("pending") ? "orange" : "success"}>
@@ -1739,24 +1745,27 @@ function Workbench() {
                       onClick={() =>
                         perform(
                           () => api(`/versions/${versionId}/exports`, {}),
-                          "数据版本已保存",
+                          "数据集版本已创建",
                         )
                       }
                     >
-                      保存数据版本
+                      创建数据集版本
                     </Button>
                   </Card>
                   <div className="section-heading">
                     <div>
-                      <h2>已保存版本</h2>
+                      <h2>已创建的数据集版本</h2>
                       <p>
-                        下载包包含训练数据、数据注册文件、审核样本和版本清单。
+                        数据包包含
+                        train.json（训练数据）、dataset_info.json（字段映射）、reviewed_samples.json（样本追溯信息）和
+                        manifest.json（版本清单）。LoRA
+                        参数需在模型训练页单独配置。
                       </p>
                     </div>
                   </div>
                   {!version.data.exports.length ? (
                     <Card>
-                      <Empty description="还没有保存的数据版本" />
+                      <Empty description="暂无固定数据集版本" />
                     </Card>
                   ) : (
                     version.data.exports.map((item, index, all) => (
@@ -1772,8 +1781,8 @@ function Workbench() {
                             </h3>
                             <p>
                               {date(item.created)} ·{" "}
-                              {number(item.manifest.count)} 条样本 · 原始 JSON
-                              格式
+                              {number(item.manifest.count)} 条样本 · JSON
+                              记录结构保留
                             </p>
                             <code>{item.id.slice(0, 8)}</code>
                           </div>
@@ -1781,13 +1790,13 @@ function Workbench() {
                             icon={<DownloadOutlined />}
                             href={`/intent-api/exports/${item.id}/download`}
                           >
-                            下载训练包 ZIP
+                            下载数据包 ZIP
                           </Button>
                           <Button
                             icon={<DownloadOutlined />}
                             href={`/intent-api/exports/${item.id}/json`}
                           >
-                            下载 JSON
+                            下载训练数据 JSON
                           </Button>
                         </div>
                         {item.manifest.training_ready !== undefined && (
@@ -1800,8 +1809,8 @@ function Workbench() {
                             showIcon
                             title={
                               item.manifest.training_ready
-                                ? "已识别训练字段映射"
-                                : "JSON 可下载，训练映射待配置"
+                                ? "训练字段映射已配置"
+                                : "可导出 JSON；原生训练需先配置字段映射"
                             }
                             description={item.manifest.training_note}
                           />
@@ -1819,13 +1828,13 @@ function Workbench() {
                     showIcon
                     title={
                       settings.data?.integrated
-                        ? "使用 LlamaFactory 原有训练流程"
-                        : "在模型所在机器上启动微调"
+                        ? "使用 LlamaFactory 执行模型微调"
+                        : "在训练服务器配置微调任务"
                     }
                     description={
                       settings.data?.integrated
-                        ? "在本页下方选择已保存的数据版本，使用顶部选择的模型启动微调。训练状态、结果和评测仍使用原有页面。"
-                        : "将数据包下载到训练机器并解压，在完整 WebUI 的 Train 页面选择这个数据目录和 wy_intent_train。也可在完整 WebUI 的“意图分类”页直接启动默认参数微调。"
+                        ? "在模型训练页配置并保存 LoRA 参数，再通过完整界面“意图分类”页下方的配置入口填入原生训练页。核对参数后启动训练。"
+                        : "在模型训练页保存配置并下载 LoRA 训练包，或在完整界面按 dataset_info.json 登记的数据集名称配置训练。数据包本身不包含 LoRA 参数。"
                     }
                   />
                 </>
@@ -1833,7 +1842,7 @@ function Workbench() {
             </>
           )}
           <footer className="page-footer">
-            LlamaFactory WY <span>让数据准备更有条理</span>
+            LlamaFactory WY <span>训练数据管理工作台</span>
           </footer>
         </main>
       </div>
@@ -1874,7 +1883,7 @@ function Workbench() {
               }
               onClick={() => intentForm.submit()}
             >
-              保存场景
+              应用场景配置
             </Button>
           </div>
         }
@@ -1913,6 +1922,13 @@ function Workbench() {
             }
           }}
         >
+          <Alert
+            className="notice"
+            type="info"
+            showIcon
+            title="场景配置保存范围"
+            description="应用场景配置后，修改保留在当前项目草稿中。请在场景配置页点击“保存配置”，将修改保存到服务端。"
+          />
           <Form.Item
             name="name"
             label="场景名称"
@@ -1920,12 +1936,12 @@ function Workbench() {
               { required: true, whitespace: true, message: "请输入场景名称" },
             ]}
           >
-            <Input placeholder="例如：北斗大模型项目意图识别" maxLength={100} />
+            <Input placeholder="例如：客户服务意图分类" maxLength={100} />
           </Form.Item>
           <Form.Item
             name="label"
             label="场景标识"
-            extra="用于区分生成场景，例如 dam_intent；记录内容和字段以参考 JSON 为准。"
+            extra="用于区分生成场景，例如 customer_intent；记录内容和字段以参考 JSON 为准。"
             rules={[
               {
                 required: true,
@@ -1935,7 +1951,7 @@ function Workbench() {
               },
             ]}
           >
-            <Input placeholder="例如：dam_intent" />
+            <Input placeholder="例如：customer_intent" />
           </Form.Item>
           <Form.Item
             name="description"
@@ -1951,7 +1967,7 @@ function Workbench() {
             <Input.TextArea
               rows={3}
               maxLength={1000}
-              placeholder="说明哪些表达属于这个场景，以及与其他类别的边界。"
+              placeholder="请说明任务目标、业务范围、内容要求及输出约束；分类任务可补充标签定义与边界。"
             />
           </Form.Item>
           <div
@@ -2022,7 +2038,7 @@ function Workbench() {
             <Input.TextArea
               rows={10}
               className="json-editor"
-              placeholder='{"instruction":"你的任务指令","input":"参考问句","output":"正确答案"}'
+              placeholder='{"instruction":"任务指令","input":"参考问句","output":"正确答案"}'
             />
           </Form.Item>
           {parsing && (
@@ -2044,7 +2060,7 @@ function Workbench() {
               showIcon
               type="warning"
               title={`至少需要 4 条不同的参考样例，当前 ${parsedExamples.count} 条`}
-              description="最多 100 条。每批尽量选取不同的 3 条参考样例，生成最多 10 条新数据。"
+              description="最多支持 100 条参考样例。默认每批选取 3 条样例并生成最多 10 条新记录，优先使用历史引用次数较少的样例。"
             />
           )}
           {parsedExamples && (
@@ -2076,7 +2092,7 @@ function Workbench() {
           <details className="training-mapping">
             <summary>训练字段映射（自动识别或自定义）</summary>
             <p>
-              导出 JSON 保留全部字段。这里仅指定 LlamaFactory
+              导出 JSON 保留全部字段。训练字段映射用于指定 LlamaFactory
               读取哪些字段；支持标准对话格式自动识别。
             </p>
             <Form.Item name="mapping_mode" label="映射方式">
@@ -2128,11 +2144,11 @@ function Workbench() {
               title={
                 labelReady
                   ? activeLabelTask.data?.result?.classification
-                    ? "模型标签推断完成，请核对"
-                    : "模型判断为非分类任务，标签可留空"
+                    ? "标签推断已完成，请核对结果"
+                    : "模型判定为非分类任务，可不设置标签约束"
                   : labelInFlight
                     ? `标签${labelTaskStatus[activeLabelTask.data?.status || "queued"]}`
-                    : "先由大模型推断答案标签"
+                    : "尚未执行输出标签推断"
               }
               description={
                 labelReady
@@ -2141,7 +2157,7 @@ function Workbench() {
                     activeLabelTask.data?.error ||
                     (activeLabelTask.data && !sameLabelInput
                       ? "样例或生成要求已变化，旧结果已失效，需要重新推断。"
-                      : "推断完成前不能编辑标签或保存场景。任务会保存草稿，关闭页面后从左侧“标签推断任务”恢复。")
+                      : "推断完成前不能编辑标签或应用场景配置。任务会保存草稿，关闭页面后从左侧“标签推断任务”恢复。")
               }
             />
             <Button
@@ -2213,7 +2229,7 @@ function Workbench() {
           type="info"
           showIcon
           title="保存后需要重新审核"
-          description="原始完整 JSON 与所有字段的修改记录都会保留，已冻结的数据版本不受影响。"
+          description="保存后样本状态变为待审核。保留原始记录和本次修订记录；已导出的固定数据集版本不受影响。"
         />
         <Form
           name="sample-editor"
@@ -2362,12 +2378,12 @@ function Workbench() {
         )}
       </Drawer>
       <Modal
-        title="按场景补生成"
+        title="按场景追加生成"
         open={extraOpen}
         onCancel={() => setExtraOpen(false)}
         onOk={() => extraForm.submit()}
         confirmLoading={busy}
-        okText="开始补生成"
+        okText="开始追加生成"
       >
         <Form
           name="supplement"
@@ -2377,7 +2393,7 @@ function Workbench() {
             perform(async () => {
               await api(`/versions/${versionId}/jobs`, values);
               setExtraOpen(false);
-            }, "补生成任务已启动")
+            }, "追加生成任务已启动")
           }
         >
           <Form.Item name="label" label="生成场景" rules={[{ required: true }]}>
@@ -2421,7 +2437,7 @@ function Workbench() {
             {settings.data?.api_key_configured
               ? "已配置（尚未验证接口连通性）"
               : settings.data?.api_key_required === false
-                ? "未配置（本机或局域网服务可不填）"
+                ? "未配置（仅适用于无需鉴权的本机或内网服务）"
                 : "未配置"}
           </dd>
           <dt>密钥环境变量</dt>
@@ -2452,8 +2468,8 @@ function Workbench() {
             showIcon
             title={
               discoveredModels.length === 1
-                ? "已识别模型，auto 将使用这个名称"
-                : "服务有多个模型，请将其中一个完整名称填写到 WY_INTENT_MODEL"
+                ? "检测到一个模型，auto 模式将使用该模型 ID"
+                : "检测到多个模型，请在 WY_INTENT_MODEL 中指定用于文本生成的完整模型 ID"
             }
             description={
               <div>

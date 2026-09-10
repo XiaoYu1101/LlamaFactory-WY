@@ -32,7 +32,7 @@ export const labelTaskStatus: Record<string, string> = {
   queued: "排队中",
   running: "推断中",
   completed: "已完成",
-  failed: "失败",
+  failed: "执行失败",
   interrupted: "已中断",
 };
 export function stableJSON(value: unknown): string {
@@ -72,13 +72,19 @@ export default function LabelTaskDrawer({
   onRefresh: () => void;
 }) {
   return (
-    <Drawer title="标签推断任务" zIndex={1100} size={900} open={open} onClose={onClose}>
+    <Drawer
+      title="标签推断任务"
+      zIndex={1100}
+      size={900}
+      open={open}
+      onClose={onClose}
+    >
       <Alert
         className="notice"
         showIcon
         type="info"
-        title="关闭页面后仍可继续查看"
-        description="任务与场景草稿保存在工作区。关闭浏览器不影响后台推断；服务重启后未完成任务标为中断，可手动重试。打开任务可恢复当时的场景草稿，核对结果后再保存。"
+        title="推断任务与草稿持久保存"
+        description="任务及提交时的场景草稿保存在服务端工作区。关闭页面不会停止推断；服务重启后未完成的任务标记为中断，可手动重试。恢复草稿后，请核对结果并保存项目配置。"
       />
       <Button onClick={onRefresh}>刷新任务</Button>
       {error && <Alert className="notice" type="error" title={error} />}
@@ -113,7 +119,7 @@ export default function LabelTaskDrawer({
           {
             title: "推断结果",
             render: (_, row) =>
-              row.error || row.result?.explanation || "等待模型返回",
+              row.error || row.result?.explanation || "等待推断结果",
           },
           {
             title: "创建时间",

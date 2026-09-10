@@ -243,7 +243,7 @@ export default function ExampleBuilder({
   function addField() {
     const key = field.trim();
     if (!key || key.length > 128)
-      return void message.error("字段名需要 1 到 128 个字符");
+      return void message.error("字段名长度必须为 1–128 个字符");
     if (Object.hasOwn(record, key)) return void message.error("字段名已存在");
     const value: Value =
       kind === "number"
@@ -264,13 +264,14 @@ export default function ExampleBuilder({
         <span>常用字段模板</span>
         <Select
           aria-label="常用字段模板"
-          placeholder="选择模板（会替换当前样例）"
+          placeholder="选择字段模板（替换现有参考样例）"
           value={null}
           options={templates.map(({ value, label }) => ({ value, label }))}
           onChange={(v) =>
             modal.confirm({
               title: "使用此模板替换样例？",
-              content: "当前样例内容将被替换。仅添加字段请使用下方“添加字段”。",
+              content:
+                "应用模板将替换现有参考样例。若需保留内容并扩展结构，请使用“添加字段”。",
               okText: "使用模板",
               onOk: () => {
                 setIndex(0);
@@ -283,7 +284,7 @@ export default function ExampleBuilder({
         />
       </div>
       <p className="builder-help">
-        直接填写内容，无需编写
+        通过表格编辑参考样例，无需手动编写
         JSON。字段名决定导出结构，增删字段会同步应用到所有样例。
       </p>
       <div className="builder-toolbar">
