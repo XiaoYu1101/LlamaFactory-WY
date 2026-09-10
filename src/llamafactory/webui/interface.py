@@ -116,14 +116,17 @@ def run_web_ui() -> None:
     gradio_ipv6 = is_env_enabled("GRADIO_IPV6")
     gradio_share = is_env_enabled("GRADIO_SHARE")
     server_name = os.getenv("GRADIO_SERVER_NAME", "[::]" if gradio_ipv6 else "0.0.0.0")
-    print("Visit http://ip:port for Web UI, e.g., http://127.0.0.1:7860")
+    print("[1/3] 正在初始化原生训练、评测界面；此时尚未监听端口。", flush=True)
     fix_proxy(ipv6_enabled=gradio_ipv6)
     from ..intent.api import install_routes
     from ..intent.service import get_service
 
     demo = create_ui().queue()
+    print("[2/3] 界面初始化完成，正在启动 HTTP 服务。", flush=True)
     demo.launch(share=gradio_share, server_name=server_name, inbrowser=False, prevent_thread_lock=True)
     install_routes(demo.app, get_service(), demo.intent_engine)
+    display_host = "<服务器IP>" if server_name in {"0.0.0.0", "::", "[::]"} else server_name
+    print(f"[3/3] 意图工作台路由已就绪：http://{display_host}:{demo.server_port}/intent/", flush=True)
     demo.block_thread()
 
 
