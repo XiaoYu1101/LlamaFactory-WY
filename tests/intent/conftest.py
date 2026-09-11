@@ -23,6 +23,6 @@ from llamafactory.intent import providers
 def isolated_generation_environment(monkeypatch):
     """Tests must not use the developer's endpoint or credentials."""
     for name in list(os.environ):
-        if name.startswith("WY_INTENT_") or name == "DEEPSEEK_API_KEY":
+        if name.startswith("LF_INTENT_") or name == "DEEPSEEK_API_KEY":
             monkeypatch.delenv(name)
     monkeypatch.setattr(providers, "local_settings", lambda *args, **kwargs: {})

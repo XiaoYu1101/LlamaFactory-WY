@@ -1,4 +1,4 @@
-# LlamaFactory-WY 意图分类实施计划
+# LlamaFactory 意图分类实施计划
 
 编制日期：2026-09-09。状态：一期数据功能已实现，自动化测试和真实 API 生成联调已完成。实际训练及评测按用户要求留在目标机器验证。
 
@@ -11,7 +11,7 @@
 - 根据用户最新要求，界面采用 React + Ant Design 6，源码位于 `web/intent/`；`api.py` 提供业务接口，原 Gradio WebUI 嵌入相同工作台并保留训练按钮。
 - 生成客户端为 `providers.py`，提示和响应校验在 `prompts.py`。现有训练入口由 `training.py` 衔接；`ui.py` 保留原型及原有训练队列桥接。
 - P1、P2 已完成；P3 已提供固定版本导出及入口衔接；P4 已验证真实 API 生成，实际模型训练由用户验证。
-- 下文保留设计依据。当前操作方式及验证范围以 [使用说明](WY_USAGE.md) 和 [测试报告](WY_TEST_REPORT.md) 为准。
+- 下文保留设计依据。当前操作方式及验证范围以 [使用说明](INTENT_USAGE.md) 和 [测试报告](INTENT_TEST_REPORT.md) 为准。
 
 ## 1. 一期目标与范围
 

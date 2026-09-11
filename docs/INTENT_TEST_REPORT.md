@@ -12,7 +12,7 @@
 - Python Ruff 检查、格式检查、字节码编译与新增 Python 文件许可证检查通过。
 - React/TypeScript 类型检查及 Vite 生产构建通过；Ant Design CLI 检查未发现弃用、可访问性或用法问题。前端依赖安装审计未发现已知漏洞。
 
-运行方式见 [使用说明](WY_USAGE.md#6-测试)。测试使用模拟模型及本机模拟服务，不依赖真实密钥、不运行微调。
+运行方式见 [使用说明](INTENT_USAGE.md#6-测试)。测试使用模拟模型及本机模拟服务，不依赖真实密钥、不运行微调。
 
 ## 真实 DeepSeek 生成
 
@@ -27,7 +27,7 @@
 
 真实数据与日志位于被 Git 忽略的本机 `workspace/live-api-check/`，不随源码发布。仓库不包含 API 密钥。
 
-最新独立复验记录保存在本机临时目录 `wy-acceptance-20260909-181150-c_m3nz13/acceptance-result.json`，不影响页面中的既有项目。
+最新独立复验记录保存在本机临时目录 `本地临时目录中的 acceptance-result.json`，不影响页面中的既有项目。
 
 ## 微调与结果代码复查
 

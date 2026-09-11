@@ -889,11 +889,9 @@ function Workbench() {
     <div className="workbench">
       <aside className="sidebar">
         <a className="brand" href="/intent/">
-          <span className="brand-mark">
-            W<span>Y</span>
-          </span>
+          <span className="brand-mark">LF</span>
           <div>
-            意图工作台<small>LLAMAFACTORY WY</small>
+            意图工作台<small>LLAMAFACTORY</small>
           </div>
         </a>
         <div className="nav-caption">数据工作流</div>
@@ -1842,7 +1840,7 @@ function Workbench() {
             </>
           )}
           <footer className="page-footer">
-            LlamaFactory WY <span>训练数据管理工作台</span>
+            LlamaFactory <span>训练数据管理工作台</span>
           </footer>
         </main>
       </div>
@@ -2469,7 +2467,7 @@ function Workbench() {
             title={
               discoveredModels.length === 1
                 ? "检测到一个模型，auto 模式将使用该模型 ID"
-                : "检测到多个模型，请在 WY_INTENT_MODEL 中指定用于文本生成的完整模型 ID"
+                : "检测到多个模型，请在 LF_INTENT_MODEL 中指定用于文本生成的完整模型 ID"
             }
             description={
               <div>
@@ -2486,7 +2484,7 @@ function Workbench() {
           type="info"
           showIcon
           title="可在 .env 中配置生成模型"
-          description="设置 WY_INTENT_BASE_URL、WY_INTENT_MODEL 和 WY_INTENT_API_KEY。模型名留空或填 auto 时，启动生成前检测服务：只有一个模型则自动使用，多个模型需填写完整名称。新建任务读取新配置。"
+          description="设置 LF_INTENT_BASE_URL、LF_INTENT_MODEL 和 LF_INTENT_API_KEY。模型名留空或填 auto 时，启动生成前检测服务：只有一个模型则自动使用，多个模型需填写完整名称。新建任务读取新配置。"
         />
       </Drawer>
     </div>

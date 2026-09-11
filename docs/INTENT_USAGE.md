@@ -1,5 +1,7 @@
 ﻿# JSON 样例扩写工作台
 
+环境变量统一使用 `LF_INTENT_` 前缀，完整配置见仓库根目录的 `.env.example`。从旧版本迁移时，请按该示例更新本机 `.env` 和启动环境中的变量名称，保留原来的配置值。已审核导出的历史数据集仍按原登记名称读取，无需重新生成或修改冻结文件。
+
 ## 工作方式
 
 一个“生成场景”代表一项数据扩写任务。例如 `dam_intent` 是大坝监测数据场景的标识，**不是模型的输出标签**。把完整 JSON 样例交给模型，按相同字段结构扩写，再审核、导出、微调。`system`、`instruction`、`input`、`output` 只是常见字段组合，并非必需的固定格式。
@@ -27,26 +29,26 @@ python -m venv .venv-workbench
 本机或局域网部署的 Qwen 只需提供兼容 Chat Completions API 的服务地址。例如：
 
 ```dotenv
-WY_INTENT_BASE_URL=http://127.0.0.1:8000/v1
-WY_INTENT_MODEL=auto
-WY_INTENT_API_KEY=
-WY_INTENT_JSON_MODE=false
-WY_INTENT_THINKING=null
+LF_INTENT_BASE_URL=http://127.0.0.1:8000/v1
+LF_INTENT_MODEL=auto
+LF_INTENT_API_KEY=
+LF_INTENT_JSON_MODE=false
+LF_INTENT_THINKING=null
 ```
 
 端口与地址应换成你实际启动的服务。模型在另一台机器时，将 127.0.0.1 换成那台机器的局域网 IP。这只是连接已部署模型的配置，不会自动部署或加载本地权重文件。
 
 - 模型名为空或 `auto`：在开始生成前请求服务的 `/models`，只有一个模型时自动使用服务返回的完整 id，并写入任务元数据；有多个模型时提示明确选择，不猜测 Qwen 版本。
-- 页面左下角“生成服务配置”提供“检测服务模型”，可查看服务返回的完整名称；需要指定时把它复制到 `WY_INTENT_MODEL`。
+- 页面左下角“生成服务配置”提供“检测服务模型”，可查看服务返回的完整名称；需要指定时把它复制到 `LF_INTENT_MODEL`。
 - 不提供模型列表接口时，仍可手动填写服务要求的模型名。
-- 无鉴权的本机/局域网服务可以将 `WY_INTENT_API_KEY` 留空，不发送 Authorization；开启鉴权时填服务实际密钥。公网服务仍要求配置密钥。
+- 无鉴权的本机/局域网服务可以将 `LF_INTENT_API_KEY` 留空，不发送 Authorization；开启鉴权时填服务实际密钥。公网服务仍要求配置密钥。
 - 配置新地址且未设置模型名时默认为 auto，也不会自动复用旧 DeepSeek 密钥；新地址默认不发送 json_mode 或 thinking 扩展参数，按服务能力显式启用。
 - 改成其他服务前检查 `.env` 中已有的 MODEL、JSON_MODE、THINKING 等选项；显式填写的选项不会自动覆盖。
-- 可选变量包括 `WY_INTENT_BATCH_SIZE`、`WY_INTENT_SEED_COUNT`、`WY_INTENT_MAX_TOKENS`、`WY_INTENT_TIMEOUT_SECONDS`、`WY_INTENT_TEMPERATURE`。`.env.example` 提供可复制示例。
+- 可选变量包括 `LF_INTENT_BATCH_SIZE`、`LF_INTENT_SEED_COUNT`、`LF_INTENT_MAX_TOKENS`、`LF_INTENT_TIMEOUT_SECONDS`、`LF_INTENT_TEMPERATURE`。`.env.example` 提供可复制示例。
 
 新建任务时重新读取生成配置；进行中的任务保持启动时的配置。续跑旧任务仍会校验服务、实际模型名及参数一致。修改 .env 后刷新页面查看配置。
 
-兼容旧配置：未设置 WY_INTENT_* 变量时，继续读取原 JSON 配置及其 `api_key_env` 指定的密钥变量。
+兼容旧配置：未设置 LF_INTENT_* 变量时，继续读取原 JSON 配置及其 `api_key_env` 指定的密钥变量。
 
 ## 按你的 JSON 生成 1000 条
 
@@ -104,7 +106,7 @@ WY_INTENT_THINKING=null
 
 无法自动识别或映射为原生训练格式的记录，仍可生成、审核和下载完整 JSON，页面会说明不能直接训练。工具调用、多模态、偏好对等特殊训练格式尚未建立自动映射；需要单独适配，不能仅靠改字段名启动。
 
-完整 LlamaFactory WebUI 的“意图分类”页嵌入同一工作台。选择已保存版本及顶部模型，点击“使用内置参数开始微调”，继续由原 Runner 执行。也可将 ZIP 解压后在 Train 页选择数据目录及 dataset_info.json 中注册的数据集（单一映射为 `wy_intent_train`，混合格式可能有多个）。原训练算法、模型加载和评测执行逻辑没有改写。
+完整 LlamaFactory WebUI 的“意图分类”页嵌入同一工作台。选择已保存版本及顶部模型，点击“使用内置参数开始微调”，继续由原 Runner 执行。也可将 ZIP 解压后在 Train 页选择数据目录及 dataset_info.json 中注册的数据集（单一映射为 `intent_train`，混合格式可能有多个）。原训练算法、模型加载和评测执行逻辑没有改写。
 
 轻量工作台不加载训练模型。真实微调需要目标机器上的模型、训练依赖和合适的显存。原有评测指标不能替代多标签任务的集合准确率、Micro/Macro-F1；请准备独立测试集。不得把保留用于最终评测的数据同时用作扩写参考样例。
 

@@ -52,10 +52,10 @@ def create_ui(demo_mode: bool = False) -> "gr.Blocks":
 
         with gr.Tabs() as workflow_tabs:
             engine.intent_tabs = workflow_tabs
-            with gr.Tab("Train", id="train", elem_id="wy-native-train"):
+            with gr.Tab("Train", id="train", elem_id="intent-native-train"):
                 engine.manager.add_elems("train", create_train_tab(engine))
 
-            with gr.Tab("Evaluate & Predict", id="eval", elem_id="wy-native-eval"):
+            with gr.Tab("Evaluate & Predict", id="eval", elem_id="intent-native-eval"):
                 engine.manager.add_elems("eval", create_eval_tab(engine))
 
             with gr.Tab("Chat"):
@@ -75,16 +75,16 @@ def create_ui(demo_mode: bool = False) -> "gr.Blocks":
             js="""() => {
             const navigate = (tab) => {
                 if (!["train", "eval"].includes(tab)) return;
-                const button = document.getElementById(`wy-native-${tab}-button`);
+                const button = document.getElementById(`intent-native-${tab}-button`);
                 if (button) { button.click(); window.scrollTo({top: 0, behavior: "smooth"}); }
             };
-            if (window.__wyNavigate) window.removeEventListener("message", window.__wyNavigate);
-            window.__wyNavigate = (event) => {
+            if (window.__intentNavigate) window.removeEventListener("message", window.__intentNavigate);
+            window.__intentNavigate = (event) => {
                 const frame = document.querySelector('iframe[title="意图分类工作台"]');
-                if (event.origin === window.location.origin && event.source === frame?.contentWindow && event.data?.type === "wy-native-tab") navigate(event.data.tab);
+                if (event.origin === window.location.origin && event.source === frame?.contentWindow && event.data?.type === "intent-native-tab") navigate(event.data.tab);
             };
-            window.addEventListener("message", window.__wyNavigate);
-            navigate(new URLSearchParams(window.location.search).get("wy_tab"));
+            window.addEventListener("message", window.__intentNavigate);
+            navigate(new URLSearchParams(window.location.search).get("intent_tab"));
         }""",
         )
         lang.change(engine.change_lang, [lang], engine.manager.get_elem_list(), queue=False)

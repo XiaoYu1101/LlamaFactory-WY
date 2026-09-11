@@ -98,10 +98,10 @@ export default function TrainingPanel({
   function openNative() {
     if (window.parent !== window)
       window.parent.postMessage(
-        { type: "wy-native-tab", tab: mode },
+        { type: "intent-native-tab", tab: mode },
         window.location.origin,
       );
-    else window.location.assign(`/?wy_tab=${mode}`);
+    else window.location.assign(`/?intent_tab=${mode}`);
   }
   async function save(values: Record<string, unknown>) {
     setBusy(true);

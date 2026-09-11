@@ -1,4 +1,4 @@
-﻿# LlamaFactory-WY
+﻿# LlamaFactory
 
 基于 [LlamaFactory](https://github.com/hiyouga/LlamaFactory) 的训练数据准备工作台。使用完整的 **JSON 样例（包括 system、自定义字段和对话数组）**，按业务场景分批生成训练记录，经人工审核后导出并接入原有微调流程。
 
@@ -29,10 +29,10 @@ python scripts/intent_workbench.py
 
 生成服务地址、模型名和密钥优先在本机 `.env` 或环境变量配置，参考 [.env.example](.env.example)；模型名填 `auto` 可发现服务中的单个模型。未设置的选项回退到 [config/intent_generation.json](config/intent_generation.json)。原始样例文件可以放在任意目录，从浏览器选择导入即可，无需放入仓库源码。
 
-- [操作指南：使用 JSON 样例生成 1000 条](docs/WY_USAGE.md)
-- [本次 JSON 流程改造测试报告](docs/WY_JSON_TEST_REPORT.md)
-- [原实施计划](docs/WY_IMPLEMENTATION_PLAN.md)
-- [历史测试报告](docs/WY_TEST_REPORT.md)
+- [操作指南：使用 JSON 样例生成 1000 条](docs/INTENT_USAGE.md)
+- [本次 JSON 流程改造测试报告](docs/INTENT_JSON_TEST_REPORT.md)
+- [原实施计划](docs/INTENT_IMPLEMENTATION_PLAN.md)
+- [历史测试报告](docs/INTENT_TEST_REPORT.md)
 
 开发代码在 `dev` 分支。数据工作台按本地单用户、共享工作区设计，运行数据保存在 `workspace/intent/`。
 
@@ -40,6 +40,6 @@ python scripts/intent_workbench.py
 
 项目基于 LlamaFactory 源码二次开发，导入版本为 `673048c6a543cbbeaed5b8444b8223dc4e23c721`，保留上游版权声明及 [Apache-2.0 许可证](LICENSE)。上游安装及训练说明见 [原始 README](README.upstream.md) 和 [中文 README](README_zh.md)。
 
-LoRA 配置：左侧“模型训练”提供常用参数、配置保存/恢复和训练迁移包下载。完整模式可将保存的配置填入原生 Train；迁移包通过原生 CLI 运行。详见 [LoRA 参数与迁移训练](docs/WY_USAGE.md#lora-参数与迁移训练)。
+LoRA 配置：左侧“模型训练”提供常用参数、配置保存/恢复和训练迁移包下载。完整模式可将保存的配置填入原生 Train；迁移包通过原生 CLI 运行。详见 [LoRA 参数与迁移训练](docs/INTENT_USAGE.md#lora-参数与迁移训练)。
 
-Linux 服务器部署与迁移配置见 [服务器部署指南](docs/WY_SERVER_DEPLOY.md)。
+Linux 服务器部署与迁移配置见 [服务器部署指南](docs/INTENT_SERVER_DEPLOY.md)。

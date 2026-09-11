@@ -147,7 +147,7 @@ def create_api(service, engine=None):
             "integrated": engine is not None,
             "api_key_required": not private_endpoint(config["base_url"]),
             "api_key_configured": bool(configured_key(config)),
-            "config_path": str(service.config_path or os.getenv("WY_INTENT_CONFIG", "config/intent_generation.json")),
+            "config_path": str(service.config_path or os.getenv("LF_INTENT_CONFIG", "config/intent_generation.json")),
         }
 
     @app.post("/settings/discover")

@@ -154,7 +154,7 @@ def test_generic_generate_review_export_roundtrip(example, tmp_path):
     assert len(output) == 17 and edited in output
     assert all(set(row) == set(example) for row in output)
     registry = json.loads((store.root / "datasets" / manifest["id"] / "dataset_info.json").read_text())
-    assert registry["wy_intent_train"]["columns"].get("system") == (
+    assert registry["intent_train"]["columns"].get("system") == (
         "system" if "system" in example else "sys_context" if mapping else None
     )
     assert Store(tmp_path).samples(version)[0][0]["record"] == edited

@@ -77,7 +77,7 @@ def freeze_dataset(store, version_id: str, approve_pending=False) -> dict:
         }
         registry = {}
         if training_ready and all(x == mappings[0] for x in mappings):
-            registry["wy_intent_train"] = {"file_name": "train.json", **mappings[0]}
+            registry["intent_train"] = {"file_name": "train.json", **mappings[0]}
         elif training_ready:
             # Different scenarios can use different original schemas without flattening them.
             for index, (label, rows) in enumerate(grouped.items(), 1):
@@ -87,7 +87,7 @@ def freeze_dataset(store, version_id: str, approve_pending=False) -> dict:
                     break
                 file_name = f"train_{index}.json"
                 contents[file_name] = json.dumps(rows, ensure_ascii=False, indent=2)
-                registry[f"wy_intent_train_{index}"] = {"file_name": file_name, **local_mappings[0]}
+                registry[f"intent_train_{index}"] = {"file_name": file_name, **local_mappings[0]}
         if not training_ready:
             registry = {}
         contents["dataset_info.json"] = dump(registry)
@@ -139,5 +139,9 @@ def get_export(store, export_id: str) -> dict:
         file = path / name
         if not file.is_file() or hashlib.sha256(file.read_bytes()).hexdigest() != expected:
             raise IntentError("已冻结的数据文件丢失或被修改，请重新导出。")
+    if "training_datasets" not in manifest:
+        # Older exports predate the manifest field; preserve their registered names.
+        registry = json.loads((path / "dataset_info.json").read_text(encoding="utf-8"))
+        manifest["training_datasets"] = list(registry)
     row["manifest"] = manifest
     return row

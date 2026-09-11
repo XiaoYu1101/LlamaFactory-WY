@@ -20,14 +20,14 @@ def main():
     parser = argparse.ArgumentParser(description="无需本地模型的意图分类数据工作台")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7861)
-    parser.add_argument("--data-dir", default=os.getenv("WY_INTENT_HOME", "workspace/intent"))
-    parser.add_argument("--config", default=os.getenv("WY_INTENT_CONFIG", "config/intent_generation.json"))
+    parser.add_argument("--data-dir", default=os.getenv("LF_INTENT_HOME", "workspace/intent"))
+    parser.add_argument("--config", default=os.getenv("LF_INTENT_CONFIG", "config/intent_generation.json"))
     parser.add_argument("--full", action="store_true", help="启动含原生训练、评测、Chat 和数据工作台的完整 WebUI")
     args = parser.parse_args()
     if args.full:
         os.environ.update(
-            WY_INTENT_HOME=args.data_dir,
-            WY_INTENT_CONFIG=args.config,
+            LF_INTENT_HOME=args.data_dir,
+            LF_INTENT_CONFIG=args.config,
             GRADIO_SERVER_NAME=args.host,
             GRADIO_SERVER_PORT=str(args.port),
         )

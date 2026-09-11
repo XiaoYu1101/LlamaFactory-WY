@@ -462,7 +462,7 @@ def create_intent_page(engine=None, service=None):
 
 def create_standalone(root=None, config_path=None):
     service = get_service(root, config_path)
-    with gr.Blocks(title="LlamaFactory-WY · 意图分类", theme=gr.themes.Soft()) as demo:
+    with gr.Blocks(title="LlamaFactory · 意图分类", theme=gr.themes.Soft()) as demo:
         elements = create_intent_page(service=service)
         demo.load(guarded(elements["config_info"]), outputs=elements["provider_info"])
     return demo
@@ -611,7 +611,7 @@ def create_ant_page(engine):
             "eval.dataset_dir": export["path"],
             "eval.dataset": export["manifest"]["training_datasets"],
             "eval.max_samples": str(export["manifest"]["count"]),
-            "eval.output_dir": f"wy_eval_{export_id[:8]}_{uid()[:8]}",
+            "eval.output_dir": f"intent_eval_{export_id[:8]}_{uid()[:8]}",
         }
         updates = {engine.manager.get_elem_by_id(name): gr.update(value=value) for name, value in values.items()}
         updates[engine.intent_tabs] = gr.update(selected="eval")

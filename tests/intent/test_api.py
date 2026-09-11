@@ -139,9 +139,9 @@ def test_env_config_precedence_and_endpoint_credential_isolation(tmp_path, monke
         providers,
         "local_settings",
         lambda: {
-            "WY_INTENT_BASE_URL": "http://192.168.1.20:8000",
-            "WY_INTENT_MODEL": "",
-            "WY_INTENT_BATCH_SIZE": "3",
+            "LF_INTENT_BASE_URL": "http://192.168.1.20:8000",
+            "LF_INTENT_MODEL": "",
+            "LF_INTENT_BATCH_SIZE": "3",
             "DEEPSEEK_API_KEY": "old-service-secret",
         },
     )
@@ -149,17 +149,17 @@ def test_env_config_precedence_and_endpoint_credential_isolation(tmp_path, monke
     assert config["base_url"] == "http://192.168.1.20:8000/v1"
     assert config["model"] == "auto" and config["batch_size"] == 3
     assert config["thinking"] is None and config["json_mode"] is False
-    assert config["api_key_env"] == "WY_INTENT_API_KEY"
+    assert config["api_key_env"] == "LF_INTENT_API_KEY"
     assert providers.configured_key(config) == ""
-    monkeypatch.setenv("WY_INTENT_MODEL", "served-qwen-name")
-    monkeypatch.setenv("WY_INTENT_JSON_MODE", "true")
+    monkeypatch.setenv("LF_INTENT_MODEL", "served-qwen-name")
+    monkeypatch.setenv("LF_INTENT_JSON_MODE", "true")
     assert read_config(path)["model"] == "served-qwen-name"
     assert read_config(path)["json_mode"] is True
 
 
 @pytest.mark.parametrize("key,value", [("JSON_MODE", "maybe"), ("BATCH_SIZE", "hello"), ("THINKING", "other")])
 def test_invalid_env_values(tmp_path, monkeypatch, key, value):
-    monkeypatch.setenv("WY_INTENT_" + key, value)
+    monkeypatch.setenv("LF_INTENT_" + key, value)
     with pytest.raises(IntentError):
         read_config()
 
@@ -207,9 +207,9 @@ def test_explicit_model_skips_discovery(api_server):
 def test_empty_environment_key_overrides_dotenv(monkeypatch):
     from llamafactory.intent import providers
 
-    monkeypatch.setattr(providers, "local_settings", lambda: {"WY_INTENT_API_KEY": "file-secret"})
-    monkeypatch.setenv("WY_INTENT_API_KEY", "")
-    assert providers.configured_key({"api_key_env": "WY_INTENT_API_KEY"}) == ""
+    monkeypatch.setattr(providers, "local_settings", lambda: {"LF_INTENT_API_KEY": "file-secret"})
+    monkeypatch.setenv("LF_INTENT_API_KEY", "")
+    assert providers.configured_key({"api_key_env": "LF_INTENT_API_KEY"}) == ""
 
 
 def test_settings_discovery_returns_exact_names_without_key(api_server, tmp_path, monkeypatch):
@@ -219,8 +219,8 @@ def test_settings_discovery_returns_exact_names_without_key(api_server, tmp_path
     from llamafactory.intent.service import IntentService
 
     config, calls, responses = api_server
-    monkeypatch.setenv("WY_INTENT_BASE_URL", config["base_url"])
-    monkeypatch.setenv("WY_INTENT_API_KEY", "TEST_ONLY")
+    monkeypatch.setenv("LF_INTENT_BASE_URL", config["base_url"])
+    monkeypatch.setenv("LF_INTENT_API_KEY", "TEST_ONLY")
     responses.append((200, {"data": [{"id": "qwen-one"}, {"id": "qwen-two"}]}))
     service = IntentService(tmp_path)
     try:

@@ -75,7 +75,7 @@ def configured_key(config):
 
 def read_config(path: str | Path | None = None) -> dict:
     if path is None:
-        path = os.getenv("WY_INTENT_CONFIG", "config/intent_generation.json")
+        path = os.getenv("LF_INTENT_CONFIG", "config/intent_generation.json")
     path = Path(path).expanduser()
     config = dict(DEFAULT_CONFIG)
     if path.is_file():
@@ -90,17 +90,17 @@ def read_config(path: str | Path | None = None) -> dict:
         raise IntentError("指定的生成配置文件不存在。")
     values = {**local_settings(), **os.environ}
     overrides = {
-        key: values[f"WY_INTENT_{key.upper()}"] for key in DEFAULT_CONFIG if f"WY_INTENT_{key.upper()}" in values
+        key: values[f"LF_INTENT_{key.upper()}"] for key in DEFAULT_CONFIG if f"LF_INTENT_{key.upper()}" in values
     }
     # Switching endpoints must never implicitly send the previous service's credential.
-    if "base_url" in overrides or "WY_INTENT_API_KEY" in values:
-        config["api_key_env"] = "WY_INTENT_API_KEY"
+    if "base_url" in overrides or "LF_INTENT_API_KEY" in values:
+        config["api_key_env"] = "LF_INTENT_API_KEY"
     if "base_url" in overrides:
         config.update(model="auto", json_mode=False, thinking=None)
     for key, value in overrides.items():
         if key == "json_mode":
             if value.lower() not in {"true", "false", "1", "0"}:
-                raise IntentError("WY_INTENT_JSON_MODE 需要为 true 或 false。")
+                raise IntentError("LF_INTENT_JSON_MODE 需要为 true 或 false。")
             value = value.lower() in {"true", "1"}
         elif key == "thinking" and value.lower() in {"", "none", "null"}:
             value = None
@@ -158,7 +158,7 @@ class APIProvider:
             models = self.models()
             if len(models) != 1:
                 raise ProviderError(
-                    "服务提供多个模型，请在 .env 的 WY_INTENT_MODEL 中填写一个完整名称：" + "、".join(models[:20])
+                    "服务提供多个模型，请在 .env 的 LF_INTENT_MODEL 中填写一个完整名称：" + "、".join(models[:20])
                 )
             self.config["model"] = models[0]
         self.descriptor = {"kind": "openai_compatible", **{k: v for k, v in self.config.items() if k != "api_key_env"}}
@@ -175,7 +175,7 @@ class APIProvider:
             with self.opener.open(request, timeout=min(10, self.config["timeout_seconds"])) as response:
                 raw = response.read(1024 * 1024 + 1)
             if len(raw) > 1024 * 1024:
-                raise ProviderError("模型列表过大，请手动填写 WY_INTENT_MODEL。")
+                raise ProviderError("模型列表过大，请手动填写 LF_INTENT_MODEL。")
             data = json.loads(raw)["data"]
             if not isinstance(data, list):
                 raise ValueError("invalid model list")
@@ -187,18 +187,18 @@ class APIProvider:
                 )
             )
             if not models:
-                raise ProviderError("服务没有返回可用模型，请先加载模型，或手动填写 WY_INTENT_MODEL。")
+                raise ProviderError("服务没有返回可用模型，请先加载模型，或手动填写 LF_INTENT_MODEL。")
             return models
         except ProviderError:
             raise
         except urllib.error.HTTPError as error:
             raise ProviderError(
-                f"获取模型列表失败（HTTP {error.code}），请检查服务地址与密钥；不支持 /models 的服务需手动填写 WY_INTENT_MODEL。"
+                f"获取模型列表失败（HTTP {error.code}），请检查服务地址与密钥；不支持 /models 的服务需手动填写 LF_INTENT_MODEL。"
             ) from None
         except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
             raise ProviderError("无法连接模型列表接口，请检查服务地址及模型服务是否已启动。", retryable=True) from None
         except (ValueError, KeyError, TypeError):
-            raise ProviderError("模型列表不是兼容格式，请手动填写 WY_INTENT_MODEL。") from None
+            raise ProviderError("模型列表不是兼容格式，请手动填写 LF_INTENT_MODEL。") from None
 
     def session(self):
         return nullcontext()

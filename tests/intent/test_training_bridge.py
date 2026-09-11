@@ -148,7 +148,7 @@ def test_intent_preset_matches_real_runner_and_visible_controls(bridge):
     updates, result = list(attach_training(engine, store, export["id"], data))
     args = captured[0]
     assert args["stage"] == "sft" and args["finetuning_type"] == "lora"
-    assert args["dataset"] == "wy_intent_train" and args["dataset_dir"].endswith(export["id"])
+    assert args["dataset"] == "intent_train" and args["dataset_dir"].endswith(export["id"])
     assert args["model_name_or_path"] == "/models/test" and args["template"] == "qwen"
     assert args["learning_rate"] == 5e-5 and args["num_train_epochs"] == 3
     assert "adapter_name_or_path" not in args and args["report_to"] == "none"
@@ -182,13 +182,13 @@ def test_evaluation_monitor_results_and_cleanup_without_model(bridge, outcome):
     runner.running_data = {elem: elem.value for elem in manager.get_elem_list() if hasattr(elem, "value")}
     for key, value in {
         "top.finetuning_type": "lora",
-        "top.checkpoint_path": ["wy_adapter"],
+        "top.checkpoint_path": ["intent_adapter"],
         "eval.dataset": ["independent_eval"],
         "eval.output_dir": "eval_run",
     }.items():
         runner.running_data[manager.get_elem_by_id(key)] = value
     args = runner._parse_eval_args(runner.running_data)
-    assert args["adapter_name_or_path"].endswith("wy_adapter")
+    assert args["adapter_name_or_path"].endswith("intent_adapter")
     assert args["eval_dataset"] == "independent_eval" and args["do_predict"]
     output = Path(args["output_dir"])
     output.mkdir(parents=True)
@@ -247,7 +247,7 @@ def test_prepare_dataset_updates_native_training_controls_without_launch(bridge,
     handler = next(fn.fn for fn in ui.fns.values() if fn.fn and fn.fn.__name__ == "prepare_training")
     updates = handler(export["id"])
     assert updates[tabs]["selected"] == "train"
-    assert updates[engine.manager.get_elem_by_id("train.dataset")]["value"] == ["wy_intent_train"]
+    assert updates[engine.manager.get_elem_by_id("train.dataset")]["value"] == ["intent_train"]
     assert updates[engine.manager.get_elem_by_id("train.dataset_dir")]["value"].endswith(export["id"])
     assert updates[engine.manager.get_elem_by_id("top.checkpoint_path")]["multiselect"]
     with store.connect() as db:
@@ -295,7 +295,7 @@ def test_saved_lora_config_reaches_original_runner(bridge, monkeypatch):
     assert args["lora_target"] == "q_proj,v_proj" and args["learning_rate"] == 0.0002
     assert args["num_train_epochs"] == 2 and args["gradient_accumulation_steps"] == 16
     assert args["cutoff_len"] == 4096 and args["bf16"] and not args["fp16"]
-    assert args["dataset"] == "wy_intent_train" and "adapter_name_or_path" not in args
+    assert args["dataset"] == "intent_train" and "adapter_name_or_path" not in args
     assert values[manager.get_elem_by_id("top.checkpoint_path")] == []
     assert updates[tabs]["selected"] == "train" and not engine.runner.running
     engine.runner.running = True
@@ -321,7 +321,7 @@ def test_evaluation_data_transfer_preserves_selected_model_and_adapter(bridge, m
     values[engine.manager.get_elem_by_id("top.checkpoint_path")] = ["trained_adapter"]
     values.update({elem: update["value"] for elem, update in updates.items() if "value" in update})
     args = engine.runner._parse_eval_args(values)
-    assert args["eval_dataset"] == "wy_intent_train"
+    assert args["eval_dataset"] == "intent_train"
     assert args["dataset_dir"].endswith(export["id"])
     assert args["model_name_or_path"] == "/models/test"
     assert "trained_adapter" in args["adapter_name_or_path"]

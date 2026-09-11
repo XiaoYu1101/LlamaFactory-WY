@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hashlib
 import json
 import threading
 from contextlib import nullcontext
@@ -194,6 +195,26 @@ def test_conflicts_and_frozen_content(store):
     (Path(export["path"]) / "train.json").write_text("[]", encoding="utf-8")
     with pytest.raises(IntentError, match="被修改"):
         get_export(store, manifest["id"])
+
+
+def test_legacy_export_preserves_registered_dataset_name(store):
+    version = project(store)["version_id"]
+    approve_all(store, version)
+    manifest = freeze_dataset(store, version)
+    path = Path(get_export(store, manifest["id"])["path"])
+    registry_path = path / "dataset_info.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry_path.write_text(json.dumps({"legacy_dataset": next(iter(registry.values()))}), encoding="utf-8")
+    manifest.pop("training_datasets")
+    manifest["files"]["dataset_info.json"] = hashlib.sha256(registry_path.read_bytes()).hexdigest()
+    with store.connect() as db:
+        db.execute("UPDATE exports SET manifest=? WHERE id=?", (json.dumps(manifest), manifest["id"]))
+    before = {file.name: file.read_bytes() for file in path.iterdir() if file.is_file()}
+    export = get_export(store, manifest["id"])
+    from llamafactory.intent.training import training_values
+
+    assert training_values(export, {"SFT": "sft"}, "fp16")["train.dataset"] == ["legacy_dataset"]
+    assert before == {file.name: file.read_bytes() for file in path.iterdir() if file.is_file()}
 
 
 def test_missing_category_blocks_export(store):

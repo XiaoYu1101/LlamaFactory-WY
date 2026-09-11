@@ -107,7 +107,7 @@ _SERVICE_LOCK = threading.Lock()
 
 
 def get_service(root=None, config_path=None):
-    root = Path(root or os.getenv("WY_INTENT_HOME", "workspace/intent")).expanduser().resolve()
+    root = Path(root or os.getenv("LF_INTENT_HOME", "workspace/intent")).expanduser().resolve()
     with _SERVICE_LOCK:
         if root not in _SERVICES:
             _SERVICES[root] = IntentService(root, config_path)

@@ -7,8 +7,8 @@
 首次部署：
 
 ```bash
-git clone --branch dev https://github.com/XiaoYu1101/LlamaFactory-WY.git
-cd LlamaFactory-WY
+git clone --branch dev https://github.com/XiaoYu1101/LlamaFactory-WY.git LlamaFactory
+cd LlamaFactory
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -36,13 +36,13 @@ nano .env
 最少核对以下配置：
 
 ```dotenv
-WY_INTENT_BASE_URL=http://127.0.0.1:8000/v1
-WY_INTENT_MODEL=auto
-WY_INTENT_API_KEY=
-WY_INTENT_JSON_MODE=false
-WY_INTENT_THINKING=null
-WY_INTENT_BATCH_SIZE=10
-WY_INTENT_SEED_COUNT=3
+LF_INTENT_BASE_URL=http://127.0.0.1:8000/v1
+LF_INTENT_MODEL=auto
+LF_INTENT_API_KEY=
+LF_INTENT_JSON_MODE=false
+LF_INTENT_THINKING=null
+LF_INTENT_BATCH_SIZE=10
+LF_INTENT_SEED_COUNT=3
 ```
 
 - BASE_URL 必须是从服务器可访问的 OpenAI 兼容接口地址；127.0.0.1 指当前服务器或当前容器，不是原 Windows 电脑。服务在其他主机时填写其可访问地址。
@@ -56,7 +56,7 @@ WY_INTENT_SEED_COUNT=3
 在项目根目录、已激活虚拟环境的终端运行：
 
 ```bash
-python scripts/intent_workbench.py --full --host 0.0.0.0 --port 7861 --data-dir /srv/llamafactory-wy/intent
+python scripts/intent_workbench.py --full --host 0.0.0.0 --port 7861 --data-dir /srv/llamafactory/intent
 ```
 
 请把数据目录替换为当前运行账号可写的持久目录。完整界面访问 `http://服务器IP:7861/`，数据工作台访问 `http://服务器IP:7861/intent/`。该服务没有工作台登录鉴权，监听全部网卡时仅向可信内网开放端口。
